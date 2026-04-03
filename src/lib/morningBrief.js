@@ -143,6 +143,28 @@ export function shortSignal(signal = "") {
   return signal || "NEUTRAL";
 }
 
+function describeSignal(signal = "") {
+  if (signal === "STRONG LONG") return "high-conviction long";
+  if (signal === "LONG BIAS") return "long bias";
+  if (signal === "SHORT BIAS") return "short bias";
+  if (signal === "STRONG SHORT") return "high-conviction short";
+  return "mixed setup";
+}
+
+function formatPrice(value) {
+  if (typeof value !== "number" || Number.isNaN(value)) return "—";
+  return value.toFixed(2);
+}
+
+function hashtagsForAsset(assetType = "US Stock") {
+  if (assetType === "Crypto") return "#crypto #swingtrading";
+  return "#stockmarket #swingtrading";
+}
+
+function tickerSignalSummary(card) {
+  return `$${card.ticker} ${describeSignal(card.signal)}`;
+}
+
 export function summarizeOteReview(card) {
   try {
     const bias = getSignalBias(card?.signal);
@@ -151,8 +173,8 @@ export function summarizeOteReview(card) {
     const alignedReviews = (review.reviews || []).filter((item) => item.direction === bias);
     const latest = alignedReviews.find((item) => item.entryPrice != null) || alignedReviews[0];
     if (!latest) return `No recent ${bias.toLowerCase()} OTE review aligned with the current signal.`;
-    if (!latest.entryPrice) return `${latest.direction} OTE touch, no trigger.`;
-    return `${latest.direction} OTE triggered; best exit ${latest.bestRuleExit?.label || "n/a"} ${latest.bestRuleExit?.pnlPct >= 0 ? "+" : ""}${latest.bestRuleExit?.pnlPct ?? 0}%.`;
+    if (!latest.entryPrice) return `${latest.direction.toLowerCase()} OTE retest touched the zone, but no trigger printed.`;
+    return `${latest.direction.toLowerCase()} OTE retest already triggered; ${latest.bestRuleExit?.label || "the best exit rule"} would have captured ${latest.bestRuleExit?.pnlPct >= 0 ? "+" : ""}${latest.bestRuleExit?.pnlPct ?? 0}%.`;
   } catch {
     return "OTE review unavailable.";
   }
@@ -163,32 +185,34 @@ export function clampPost(text, max = 280) {
   return `${text.slice(0, max - 1).trimEnd()}…`;
 }
 
-export function buildSummaryPost(results, sourceLabel, timeframe, confirmTimeframe) {
+export function buildSummaryPost(results, sourceLabel, timeframe, confirmTimeframe, assetType) {
   const top = results.slice(0, 3);
   const longCount = results.filter((item) => item.signal.includes("LONG")).length;
   const shortCount = results.filter((item) => item.signal.includes("SHORT")).length;
   const neutralCount = results.filter((item) => item.signal === "NEUTRAL").length;
   const topText = top.length
-    ? top.map((item, index) => `${index + 1}) ${item.ticker} ${shortSignal(item.signal)} S${item.score}`).join(" | ")
+    ? top.map(tickerSignalSummary).join(", ")
     : "no clean setups cleared the screen";
+  const breadthTilt = shortCount > longCount ? "Breadth leans bearish" : longCount > shortCount ? "Breadth leans bullish" : "Breadth is mixed";
   return clampPost(
-    `Morning screener ${sourceLabel} ${timeframe}${confirmTimeframe ? `/${confirmTimeframe}` : ""}: ${topText}. Breadth: ${longCount} long / ${shortCount} short / ${neutralCount} neutral. Watching confirmation, not chasing. #stocks #trading`,
+    `Morning brief, ${sourceLabel} on ${timeframe}${confirmTimeframe ? `/${confirmTimeframe}` : ""}: ${topText}. ${breadthTilt}: ${shortCount} short / ${longCount} long / ${neutralCount} mixed. Watching failed bounces or clean confirmation, not chasing. ${hashtagsForAsset(assetType)}`,
   );
 }
 
-export function buildThreadStarter(results, timeframe) {
+export function buildThreadStarter(results, timeframe, assetType) {
   const top = results
     .slice(0, 3)
-    .map((item) => `${item.ticker} ${shortSignal(item.signal)} S${item.score}/C${item.confidence}%`)
-    .join(" • ") || "none qualified today";
-  return clampPost(`Top 3 ${timeframe} setups from this morning’s screen: ${top}. Quick trade-plan notes below. #stocks #swingtrading`);
+    .map(tickerSignalSummary)
+    .join(", ") || "no clear setups today";
+  return clampPost(`Top 3 on watch this morning (${timeframe}): ${top}. Quick trade-plan notes below. ${hashtagsForAsset(assetType)}`);
 }
 
 export function buildReply(card, index) {
-  const lineOne = `${index + 1}/3 ${card.ticker} ${card.timeframe}: ${card.signal} (S${card.score}/C${card.confidence}%).`;
-  const lineTwo = `Plan: entry $${card.entry}, stop $${card.stop}, target $${card.target}.`;
-  const lineThree = `${card.analysis?.heroLead || card.analysis?.summary || "Mixed signal stack."} ${summarizeOteReview(card)}`;
-  return clampPost(`${lineOne} ${lineTwo} ${lineThree} #stocks`);
+  const lineOne = `${index + 1}/3 $${card.ticker} ${card.timeframe}: ${describeSignal(card.signal)}.`;
+  const lineTwo = `Entry $${formatPrice(card.entry)} | Stop $${formatPrice(card.stop)} | Target $${formatPrice(card.target)}.`;
+  const lineThree = card.analysis?.heroLead || card.analysis?.summary || "Mixed signal stack.";
+  const lineFour = `OTE note: ${summarizeOteReview(card)}`;
+  return clampPost(`${lineOne} ${lineTwo} ${lineThree} ${lineFour} ${hashtagsForAsset(card.assetType)}`);
 }
 
 export function resolveBriefUniverse({ source = "Mega Cap Tech", customTickers = "" } = {}) {
@@ -280,8 +304,8 @@ export async function runMorningBrief({
     failures,
     results: ranked,
     topResults,
-    summaryPost: buildSummaryPost(ranked, sourceLabel, timeframe, confirmTimeframe),
-    threadStarter: buildThreadStarter(topResults, timeframe),
+    summaryPost: buildSummaryPost(ranked, sourceLabel, timeframe, confirmTimeframe, assetType),
+    threadStarter: buildThreadStarter(topResults, timeframe, assetType),
     replyDrafts: topResults.map((card, index) => buildReply(card, index)),
   };
 }
