@@ -136,10 +136,11 @@ export function rankMorningBriefResults(results, sortBy = "score") {
 }
 
 export function shortSignal(signal = "") {
-  return signal
-    .replace("STRONG ", "S ")
-    .replace("LONG BIAS", "LONG")
-    .replace("SHORT BIAS", "SHORT");
+  if (signal === "STRONG LONG") return "STRONG LONG";
+  if (signal === "LONG BIAS") return "LONG";
+  if (signal === "SHORT BIAS") return "SHORT";
+  if (signal === "STRONG SHORT") return "STRONG SHORT";
+  return signal || "NEUTRAL";
 }
 
 export function summarizeOteReview(card) {
@@ -148,8 +149,8 @@ export function summarizeOteReview(card) {
     if (bias === "NEUTRAL") return "OTE not part of the current neutral setup.";
     const review = reviewOteTriggers(card.raw);
     const alignedReviews = (review.reviews || []).filter((item) => item.direction === bias);
-    const latest = alignedReviews.find((item) => item.entryPrice != null) || alignedReviews[0] || review.latestTriggered || review.latest;
-    if (!latest) return "No recent valid OTE review.";
+    const latest = alignedReviews.find((item) => item.entryPrice != null) || alignedReviews[0];
+    if (!latest) return `No recent ${bias.toLowerCase()} OTE review aligned with the current signal.`;
     if (!latest.entryPrice) return `${latest.direction} OTE touch, no trigger.`;
     return `${latest.direction} OTE triggered; best exit ${latest.bestRuleExit?.label || "n/a"} ${latest.bestRuleExit?.pnlPct >= 0 ? "+" : ""}${latest.bestRuleExit?.pnlPct ?? 0}%.`;
   } catch {
