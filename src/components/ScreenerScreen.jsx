@@ -1,5 +1,3 @@
-// Screener — scan a watchlist of tickers and rank by signal strength
-
 import { lazy, Suspense, useEffect, useState } from "react";
 import { C, Card, Chip, SecHead, Spinner } from "./ui.jsx";
 import {
@@ -13,6 +11,7 @@ import {
 import { buildLeaderboardVideoProps } from "./videoExportProps.js";
 import { fetchCandleData } from "../api/finnhub.js";
 import { buildSignalCard, SIGNALS } from "../indicators/scoring.js";
+import { SECTOR_ETFS, SECTOR_STOCKS } from "../api/universe.js";
 
 const BUILTIN_WATCHLISTS = {
   "Mega Cap Tech": ["AAPL", "MSFT", "NVDA", "GOOGL", "META", "AMZN", "TSLA"],
@@ -22,15 +21,23 @@ const BUILTIN_WATCHLISTS = {
   "Value / Dividend": ["JPM", "V", "JNJ", "PG", "KO", "PFE", "CVX"],
 };
 
-import { SECTOR_ETFS, SECTOR_STOCKS } from "../api/universe.js";
-
 const CONFIRM_OPTIONS = ["OFF", "AUTO", "1H", "4H", "1D", "1W"];
+const TIMEFRAME_OPTIONS = ["1H", "4H", "1D", "1W"];
+const SORT_OPTIONS = [
+  { id: "score", label: "BEST SCORE" },
+  { id: "confidence", label: "BEST CONF" },
+  { id: "rsi", label: "LOW RSI" },
+  { id: "volume", label: "HIGH VOL" },
+  { id: "mtf", label: "MTF ALIGN" },
+];
+
 const AUTO_CONFIRM_MAP = {
   "1H": "4H",
   "4H": "1D",
   "1D": "1W",
   "1W": null,
 };
+
 const MTF_SORT_RANK = {
   ALIGNED: 4,
   MIXED: 3,
@@ -41,7 +48,7 @@ const MTF_SORT_RANK = {
 
 const SectorHeatmap = lazy(() => import("./SectorHeatmap.jsx"));
 const VideoExportButton = lazy(() =>
-  import("./VideoExport.jsx").then((module) => ({ default: module.VideoExportButton }))
+  import("./VideoExport.jsx").then((module) => ({ default: module.VideoExportButton })),
 );
 
 function LazyInlineFallback({ label = "LOADING" }) {
@@ -126,6 +133,36 @@ function getMtfChipProps(mtf) {
   return { label: `${mtf.timeframe} N/A`, color: C.dim, bg: "#101610", bd: `${C.border}` };
 }
 
+function parseTickerInput(input) {
+  return input
+    .split(",")
+    .map((ticker) => ticker.trim().toUpperCase())
+    .filter(Boolean);
+}
+
+function getActiveTickers(customTickers, watchlist, savedWatchlists) {
+  if (customTickers.trim()) return parseTickerInput(customTickers);
+  return ({ ...BUILTIN_WATCHLISTS, ...savedWatchlists })[watchlist] || [];
+}
+
+function getActiveSourceLabel(customTickers, watchlist) {
+  if (customTickers.trim()) return "CUSTOM LIST";
+  return watchlist.toUpperCase();
+}
+
+function summarizeResults(cards = []) {
+  if (!cards.length) return null;
+  const valid = cards.filter((card) => !card.error);
+  if (!valid.length) return null;
+  const strongest = [...valid].sort((a, b) => (b.score || 0) - (a.score || 0))[0];
+  return {
+    strongest,
+    longCount: valid.filter((card) => card.signal?.includes("LONG")).length,
+    shortCount: valid.filter((card) => card.signal?.includes("SHORT")).length,
+    neutralCount: valid.filter((card) => card.signal === "NEUTRAL").length,
+  };
+}
+
 async function buildScreenedCard(ticker, timeframe, assetType, confirmTimeframe) {
   const raw = await fetchCandleData(ticker, timeframe, assetType);
   const card = buildSignalCard(ticker, timeframe, raw);
@@ -137,16 +174,19 @@ async function buildScreenedCard(ticker, timeframe, assetType, confirmTimeframe)
   try {
     const confirmRaw = await fetchCandleData(ticker, confirmTimeframe, assetType);
     const confirmCard = buildSignalCard(ticker, confirmTimeframe, confirmRaw);
-    return {
-      ...card,
-      mtf: buildMtfState(card.signal, confirmCard.signal, confirmTimeframe),
-    };
+    return { ...card, mtf: buildMtfState(card.signal, confirmCard.signal, confirmTimeframe) };
   } catch (error) {
-    return {
-      ...card,
-      mtf: buildMtfState(card.signal, null, confirmTimeframe, error.message),
-    };
+    return { ...card, mtf: buildMtfState(card.signal, null, confirmTimeframe, error.message) };
   }
+}
+
+function StepCard({ title, body, accent = C.green }) {
+  return (
+    <div style={{ background: "#081008", border: `1px solid ${C.border}`, borderLeft: `3px solid ${accent}`, borderRadius: 8, padding: "10px 12px" }}>
+      <div style={{ color: accent, fontSize: "0.6rem", letterSpacing: "0.1em", fontFamily: C.mono, fontWeight: 700, marginBottom: 5 }}>{title}</div>
+      <div style={{ color: C.mid, fontSize: "0.56rem", fontFamily: C.mono, lineHeight: 1.55 }}>{body}</div>
+    </div>
+  );
 }
 
 export default function ScreenerScreen({ onSelectTicker }) {
@@ -162,10 +202,11 @@ export default function ScreenerScreen({ onSelectTicker }) {
   const [results, setResults] = useState(() => persisted.results || null);
   const [sortBy, setSortBy] = useState(() => persisted.sortBy || "score");
   const [autoScanning, setAutoScanning] = useState(false);
-  const [scanProgress, setScanProgress] = useState({ done: 0, total: 0, found: 0 });
+  const [scanProgress, setScanProgress] = useState({ done: 0, total: 0, found: 0, phase: "" });
   const [minScore, setMinScore] = useState(() => persisted.minScore ?? 60);
   const [error, setError] = useState(null);
   const [scanTime, setScanTime] = useState(() => persisted.scanTime ? new Date(persisted.scanTime) : null);
+  const [showHeatmap, setShowHeatmap] = useState(false);
   const confirmTimeframe = resolveConfirmationTimeframe(timeframe, confirmMode);
 
   useEffect(() => {
@@ -182,30 +223,43 @@ export default function ScreenerScreen({ onSelectTicker }) {
   }, [watchlist, customTickers, timeframe, confirmMode, sortBy, minScore, results, scanTime]);
 
   const scan = async () => {
-    setLoading(true); setResults(null); setError(null);
+    setLoading(true);
+    setResults(null);
+    setError(null);
 
-    let tickers;
-    if (customTickers.trim()) {
-      tickers = customTickers.split(",").map(t => t.trim().toUpperCase()).filter(Boolean);
-    } else {
-      tickers = ({...BUILTIN_WATCHLISTS, ...savedWatchlists})[watchlist] || [];
+    const tickers = getActiveTickers(customTickers, watchlist, savedWatchlists);
+    if (!tickers.length) {
+      setError("No tickers to scan.");
+      setLoading(false);
+      return;
     }
 
-    if (!tickers.length) { setError("No tickers to scan."); setLoading(false); return; }
+    const assetType = watchlist === "Crypto" || tickers.some((ticker) => ["BTC", "ETH", "SOL", "XRP", "ADA", "AVAX"].includes(ticker))
+      ? "Crypto"
+      : "US Stock";
 
-    const assetType = watchlist === "Crypto" || tickers.some(t => ["BTC", "ETH", "SOL", "XRP", "ADA", "AVAX"].includes(t)) ? "Crypto" : "US Stock";
     setProgress({ done: 0, total: tickers.length });
-
     const cards = [];
+
     for (let i = 0; i < tickers.length; i++) {
       try {
         const card = await buildScreenedCard(tickers[i], timeframe, assetType, confirmTimeframe);
         cards.push(card);
-      } catch (e) {
-        cards.push({ ticker: tickers[i], signal: "NEUTRAL", score: 0, confidence: 0, entry: 0, rsi: 50, vol: 0, adx: 0, error: e.message });
+      } catch (scanError) {
+        cards.push({
+          ticker: tickers[i],
+          signal: "NEUTRAL",
+          score: 0,
+          confidence: 0,
+          entry: 0,
+          rsi: 50,
+          vol: 0,
+          adx: 0,
+          error: scanError.message,
+        });
       }
       setProgress({ done: i + 1, total: tickers.length });
-      if (i < tickers.length - 1) await new Promise(r => setTimeout(r, 250));
+      if (i < tickers.length - 1) await new Promise((resolve) => setTimeout(resolve, 250));
     }
 
     setResults(cards);
@@ -213,14 +267,13 @@ export default function ScreenerScreen({ onSelectTicker }) {
     setLoading(false);
   };
 
-  // Smart scan: sectors first, then drill into hot/cold sectors
   const autoScan = async () => {
-    setAutoScanning(true); setResults(null); setError(null);
+    setAutoScanning(true);
+    setResults(null);
+    setError(null);
 
     const sectorScores = {};
     const allCards = [];
-
-    // Phase 1: Scan sector ETFs to find hot/cold sectors
     const sectorNames = Object.keys(SECTOR_ETFS);
     setScanProgress({ done: 0, total: sectorNames.length, found: 0, phase: "Scanning sectors" });
 
@@ -235,10 +288,9 @@ export default function ScreenerScreen({ onSelectTicker }) {
         sectorScores[name] = 50;
       }
       setScanProgress({ done: i + 1, total: sectorNames.length, found: 0, phase: "Scanning sectors" });
-      await new Promise(r => setTimeout(r, 150));
+      await new Promise((resolve) => setTimeout(resolve, 150));
     }
 
-    // Phase 2: Pick the hottest (score >= 60) and coldest (score <= 40) sectors
     const hotSectors = Object.entries(sectorScores)
       .filter(([, score]) => score >= 58)
       .sort((a, b) => b[1] - a[1])
@@ -249,22 +301,17 @@ export default function ScreenerScreen({ onSelectTicker }) {
       .map(([name]) => name);
 
     const sectorsToScan = [...hotSectors, ...coldSectors];
-    // If no extreme sectors, scan top 3 and bottom 3
     if (!sectorsToScan.length) {
-      const sorted = Object.entries(sectorScores).sort((a, b) => b[1] - a[1]);
-      sectorsToScan.push(...sorted.slice(0, 3).map(([n]) => n));
-      sectorsToScan.push(...sorted.slice(-3).map(([n]) => n));
+      const sortedSectors = Object.entries(sectorScores).sort((a, b) => b[1] - a[1]);
+      sectorsToScan.push(...sortedSectors.slice(0, 3).map(([name]) => name));
+      sectorsToScan.push(...sortedSectors.slice(-3).map(([name]) => name));
     }
 
-    // Phase 3: Scan individual stocks in those sectors
     const tickersToScan = [];
     for (const sector of sectorsToScan) {
-      const stocks = SECTOR_STOCKS[sector] || [];
-      tickersToScan.push(...stocks);
+      tickersToScan.push(...(SECTOR_STOCKS[sector] || []));
     }
-    // Remove dupes
     const uniqueTickers = [...new Set(tickersToScan)];
-
     setScanProgress({ done: 0, total: uniqueTickers.length, found: 0, phase: `Drilling into ${sectorsToScan.length} sectors` });
 
     for (let i = 0; i < uniqueTickers.length; i++) {
@@ -277,7 +324,7 @@ export default function ScreenerScreen({ onSelectTicker }) {
         void scanError;
       }
       setScanProgress({ done: i + 1, total: uniqueTickers.length, found: allCards.length, phase: `Drilling into ${sectorsToScan.length} sectors` });
-      if (i < uniqueTickers.length - 1) await new Promise(r => setTimeout(r, 150));
+      if (i < uniqueTickers.length - 1) await new Promise((resolve) => setTimeout(resolve, 150));
     }
 
     setResults(allCards);
@@ -285,11 +332,10 @@ export default function ScreenerScreen({ onSelectTicker }) {
     setAutoScanning(false);
   };
 
-
   const sorted = results ? [...results].sort((a, b) => {
     if (sortBy === "score") return (b.score || 0) - (a.score || 0);
     if (sortBy === "confidence") return (b.confidence || 0) - (a.confidence || 0);
-    if (sortBy === "rsi") return (a.rsi || 50) - (b.rsi || 50); // low RSI first (oversold)
+    if (sortBy === "rsi") return (a.rsi || 50) - (b.rsi || 50);
     if (sortBy === "volume") return (b.vol || 0) - (a.vol || 0);
     if (sortBy === "mtf") {
       const mtfDiff = (MTF_SORT_RANK[b.mtf?.status || "OFF"] || 0) - (MTF_SORT_RANK[a.mtf?.status || "OFF"] || 0);
@@ -304,71 +350,208 @@ export default function ScreenerScreen({ onSelectTicker }) {
     acc[status] = (acc[status] || 0) + 1;
     return acc;
   }, { ALIGNED: 0, CONFLICT: 0, MIXED: 0, UNAVAILABLE: 0, OFF: 0 });
-  const resultsConfirmTimeframe = sorted?.find(card => card.mtf?.timeframe)?.mtf?.timeframe || null;
+  const resultsConfirmTimeframe = sorted?.find((card) => card.mtf?.timeframe)?.mtf?.timeframe || null;
+  const activeTickers = getActiveTickers(customTickers, watchlist, savedWatchlists);
+  const sourceLabel = getActiveSourceLabel(customTickers, watchlist);
+  const resultSummary = summarizeResults(sorted || []);
 
   return (
     <div className="fade">
       <Card>
-        <SecHead left="STOCK SCREENER" right="SCAN WATCHLIST" />
+        <SecHead left="SCREENER WORKFLOW" right="SOURCE → FILTER → RUN" />
         <p style={{ color: C.dim, fontSize: "0.62rem", fontFamily: C.mono, lineHeight: 1.65, marginBottom: 14 }}>
-          Scan a group of tickers and rank them by signal strength. Pick the best setups.
+          Use a quick watchlist scan when you already know the names. Use auto sector drill when you want the app to hunt for stronger themes first.
         </p>
 
-        {/* Watchlist selector */}
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
-          {Object.keys({...BUILTIN_WATCHLISTS, ...savedWatchlists}).map(name => (
-            <button key={name} onClick={() => { setWatchlist(name); setCustomTickers(""); setLastWatchlist(name); }}
-              style={{
-                background: watchlist === name && !customTickers ? "#0d2a18" : C.card,
-                border: `1px solid ${watchlist === name && !customTickers ? C.green : C.border}`,
-                color: watchlist === name && !customTickers ? C.green : C.mid,
-                borderRadius: 5, padding: "5px 12px", fontSize: "0.62rem", fontFamily: C.mono,
-              }}>
-              {name}
-            </button>
-          ))}
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+          <Chip label={`SOURCE ${sourceLabel}`} color={C.cyan} bg="#051414" bd={`${C.cyan}35`} />
+          <Chip label={`${activeTickers.length} TICKERS`} color={C.mid} bg="#101610" bd={C.border} />
+          <Chip label={`TF ${timeframe}`} color={C.green} bg="#0b2214" bd={`${C.green}40`} />
+          <Chip
+            label={confirmTimeframe ? `MTF ${timeframe}/${confirmTimeframe}` : "MTF OFF"}
+            color={confirmTimeframe ? C.yellow : C.dim}
+            bg={confirmTimeframe ? "#191400" : "#101610"}
+            bd={confirmTimeframe ? "#504400" : C.border}
+          />
         </div>
 
-        {/* Custom input */}
-        <div style={{ marginBottom: 10 }}>
-          <label style={{ color: C.dim, fontSize: "0.55rem", letterSpacing: "0.1em", fontFamily: C.mono, display: "block", marginBottom: 4 }}>
-            OR ENTER CUSTOM TICKERS (comma separated)
-          </label>
-          <input value={customTickers} onChange={e => setCustomTickers(e.target.value.toUpperCase())}
-            placeholder="AAPL, MSFT, TSLA"
-            style={{ width: "100%", background: "#090f09", border: `1px solid ${C.border}`, borderRadius: 5, padding: "8px 10px", color: C.light, fontFamily: C.mono, fontSize: "0.75rem" }} />
-        </div>
-
-        {/* Save custom watchlist */}
-        {customTickers.trim() && (
-          <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-            <input value={saveName} onChange={e => setSaveName(e.target.value)} placeholder="Watchlist name"
-              style={{ flex: 1, background: "#090f09", border: `1px solid ${C.border}`, borderRadius: 5, padding: "6px 8px", color: C.light, fontFamily: C.mono, fontSize: "0.65rem" }} />
-            <button onClick={() => {
-              if (!saveName.trim()) return;
-              const tickers = customTickers.split(",").map(t => t.trim().toUpperCase()).filter(Boolean);
-              saveWatchlist(saveName.trim(), tickers);
-              setSavedWatchlists(getWatchlists());
-              setSaveName("");
-            }} style={{
-              background: "#0d2a18", border: `1px solid ${C.green}`, color: C.green,
-              borderRadius: 5, padding: "6px 12px", fontSize: "0.58rem", fontFamily: C.mono, fontWeight: 700,
-            }}>SAVE</button>
+        <div style={{ background: "#0a120a", border: `1px solid ${C.border}`, borderRadius: 8, padding: "12px 14px", marginBottom: 12 }}>
+          <div style={{ color: C.light, fontSize: "0.62rem", letterSpacing: "0.1em", fontFamily: C.mono, marginBottom: 8 }}>STEP 1 · CHOOSE A SOURCE LIST</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+            {Object.keys({ ...BUILTIN_WATCHLISTS, ...savedWatchlists }).map((name) => (
+              <button
+                key={name}
+                onClick={() => {
+                  setWatchlist(name);
+                  setCustomTickers("");
+                  setLastWatchlist(name);
+                }}
+                style={{
+                  background: watchlist === name && !customTickers ? "#0d2a18" : C.card,
+                  border: `1px solid ${watchlist === name && !customTickers ? C.green : C.border}`,
+                  color: watchlist === name && !customTickers ? C.green : C.mid,
+                  borderRadius: 5,
+                  padding: "5px 12px",
+                  fontSize: "0.62rem",
+                  fontFamily: C.mono,
+                }}
+              >
+                {name}
+              </button>
+            ))}
           </div>
-        )}
+          <div style={{ marginBottom: 10 }}>
+            <label style={{ color: C.dim, fontSize: "0.55rem", letterSpacing: "0.1em", fontFamily: C.mono, display: "block", marginBottom: 4 }}>
+              CUSTOM TICKERS
+            </label>
+            <input
+              value={customTickers}
+              onChange={(e) => setCustomTickers(e.target.value.toUpperCase())}
+              placeholder="AAPL, MSFT, TSLA"
+              style={{ width: "100%", background: "#090f09", border: `1px solid ${C.border}`, borderRadius: 5, padding: "8px 10px", color: C.light, fontFamily: C.mono, fontSize: "0.75rem" }}
+            />
+          </div>
+          {customTickers.trim() && (
+            <div style={{ display: "flex", gap: 6 }}>
+              <input
+                value={saveName}
+                onChange={(e) => setSaveName(e.target.value)}
+                placeholder="Watchlist name"
+                style={{ flex: 1, background: "#090f09", border: `1px solid ${C.border}`, borderRadius: 5, padding: "6px 8px", color: C.light, fontFamily: C.mono, fontSize: "0.65rem" }}
+              />
+              <button
+                onClick={() => {
+                  if (!saveName.trim()) return;
+                  saveWatchlist(saveName.trim(), parseTickerInput(customTickers));
+                  setSavedWatchlists(getWatchlists());
+                  setSaveName("");
+                }}
+                style={{
+                  background: "#0d2a18",
+                  border: `1px solid ${C.green}`,
+                  color: C.green,
+                  borderRadius: 5,
+                  padding: "6px 12px",
+                  fontSize: "0.58rem",
+                  fontFamily: C.mono,
+                  fontWeight: 700,
+                }}
+              >
+                SAVE
+              </button>
+            </div>
+          )}
+        </div>
 
-        {/* Timeframe */}
-        <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 14 }}>
-          <label style={{ color: C.dim, fontSize: "0.55rem", fontFamily: C.mono }}>TIMEFRAME</label>
-          <select value={timeframe} onChange={e => setTimeframe(e.target.value)}
-            style={{ background: "#090f09", border: `1px solid ${C.border}`, borderRadius: 5, padding: "6px 10px", color: C.light, fontFamily: C.mono, fontSize: "0.7rem" }}>
-            {["1H", "4H", "1D", "1W"].map(t => <option key={t}>{t}</option>)}
-          </select>
-          <label style={{ color: C.dim, fontSize: "0.55rem", fontFamily: C.mono }}>MTF</label>
-          <select value={confirmMode} onChange={e => setConfirmMode(e.target.value)}
-            style={{ background: "#090f09", border: `1px solid ${C.border}`, borderRadius: 5, padding: "6px 10px", color: C.light, fontFamily: C.mono, fontSize: "0.7rem" }}>
-            {CONFIRM_OPTIONS.map(option => <option key={option}>{option}</option>)}
-          </select>
+        <div style={{ background: "#0a120a", border: `1px solid ${C.border}`, borderRadius: 8, padding: "12px 14px", marginBottom: 12 }}>
+          <div style={{ color: C.light, fontSize: "0.62rem", letterSpacing: "0.1em", fontFamily: C.mono, marginBottom: 8 }}>STEP 2 · SET SCAN RULES</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 10 }}>
+            <div>
+              <label style={{ color: C.dim, fontSize: "0.55rem", fontFamily: C.mono, display: "block", marginBottom: 4 }}>TIMEFRAME</label>
+              <select
+                value={timeframe}
+                onChange={(e) => setTimeframe(e.target.value)}
+                style={{ width: "100%", background: "#090f09", border: `1px solid ${C.border}`, borderRadius: 5, padding: "6px 10px", color: C.light, fontFamily: C.mono, fontSize: "0.7rem" }}
+              >
+                {TIMEFRAME_OPTIONS.map((option) => <option key={option}>{option}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ color: C.dim, fontSize: "0.55rem", fontFamily: C.mono, display: "block", marginBottom: 4 }}>MTF CHECK</label>
+              <select
+                value={confirmMode}
+                onChange={(e) => setConfirmMode(e.target.value)}
+                style={{ width: "100%", background: "#090f09", border: `1px solid ${C.border}`, borderRadius: 5, padding: "6px 10px", color: C.light, fontFamily: C.mono, fontSize: "0.7rem" }}
+              >
+                {CONFIRM_OPTIONS.map((option) => <option key={option}>{option}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ color: C.dim, fontSize: "0.55rem", fontFamily: C.mono, display: "block", marginBottom: 4 }}>SORT RESULTS</label>
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                style={{ width: "100%", background: "#090f09", border: `1px solid ${C.border}`, borderRadius: 5, padding: "6px 10px", color: C.light, fontFamily: C.mono, fontSize: "0.7rem" }}
+              >
+                {SORT_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ color: C.dim, fontSize: "0.55rem", fontFamily: C.mono, display: "block", marginBottom: 4 }}>AUTO MIN SCORE</label>
+              <input
+                type="number"
+                value={minScore}
+                onChange={(e) => setMinScore(Number(e.target.value))}
+                min={30}
+                max={90}
+                step={5}
+                style={{ width: "100%", background: "#090f09", border: `1px solid ${C.border}`, borderRadius: 5, padding: "6px 10px", color: C.light, fontFamily: C.mono, fontSize: "0.75rem" }}
+              />
+            </div>
+          </div>
+          <p style={{ color: C.dim, fontSize: "0.52rem", fontFamily: C.mono }}>
+            {confirmTimeframe
+              ? `Primary results come from ${timeframe}, then ${confirmTimeframe} is used to confirm or challenge the setup.`
+              : "Primary results use only the selected timeframe with no higher-timeframe confirmation."}
+          </p>
+        </div>
+
+        <div style={{ background: "#0a120a", border: `1px solid ${C.border}`, borderRadius: 8, padding: "12px 14px", marginBottom: 10 }}>
+          <div style={{ color: C.light, fontSize: "0.62rem", letterSpacing: "0.1em", fontFamily: C.mono, marginBottom: 8 }}>STEP 3 · RUN THE RIGHT SCAN</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10, marginBottom: 12 }}>
+            <StepCard
+              title="WATCHLIST SCAN"
+              body="Ranks your chosen list from best to worst. Use this when you already know the names you care about."
+              accent={C.green}
+            />
+            <StepCard
+              title="AUTO SECTOR DRILL"
+              body="Starts with sector ETFs, then drills into the strongest and weakest groups to find fresh stock candidates."
+              accent={C.yellow}
+            />
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+            <button
+              onClick={scan}
+              disabled={loading}
+              style={{
+                width: "100%",
+                background: loading ? "#0a120a" : "linear-gradient(135deg,#0d2e18,#0f3820)",
+                border: `1px solid ${loading ? C.border : C.green}`,
+                color: loading ? C.dim : C.green,
+                borderRadius: 7,
+                padding: "12px 0",
+                fontSize: "0.74rem",
+                letterSpacing: "0.14em",
+                fontWeight: 700,
+              }}
+            >
+              {loading
+                ? <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}><Spinner /> WATCHLIST {progress.done}/{progress.total}</span>
+                : "RUN WATCHLIST SCAN"}
+            </button>
+            <button
+              onClick={autoScan}
+              disabled={autoScanning || loading}
+              style={{
+                width: "100%",
+                background: autoScanning ? "#0a120a" : "#141100",
+                border: `1px solid ${autoScanning ? C.border : "#504400"}`,
+                color: autoScanning ? C.dim : C.yellow,
+                borderRadius: 7,
+                padding: "12px 0",
+                fontSize: "0.74rem",
+                letterSpacing: "0.14em",
+                fontWeight: 700,
+              }}
+            >
+              {autoScanning
+                ? <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}><Spinner /> {scanProgress.phase || "AUTO SCAN"} {scanProgress.done}/{scanProgress.total}</span>
+                : "RUN AUTO SECTOR DRILL"}
+            </button>
+          </div>
+
           {(results || customTickers || scanTime) && (
             <button
               onClick={() => {
@@ -394,68 +577,13 @@ export default function ScreenerScreen({ onSelectTicker }) {
                 color: C.dim,
                 fontFamily: C.mono,
                 fontSize: "0.6rem",
+                marginTop: 10,
               }}
             >
               CLEAR LAST SCAN
             </button>
           )}
         </div>
-        <p style={{ color: C.dim, fontSize: "0.52rem", fontFamily: C.mono, marginTop: -8, marginBottom: 12 }}>
-          {confirmTimeframe
-            ? `Companion timeframe confirmation active: ${timeframe} vs ${confirmTimeframe}.`
-            : "Companion timeframe confirmation is off for this screener run."}
-        </p>
-
-        {/* Auto-Scan */}
-        <div style={{ background: "#0a120a", border: `1px solid ${C.border}`, borderRadius: 8, padding: "12px 14px", marginBottom: 10 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <span style={{ color: C.green, fontSize: "0.6rem", letterSpacing: "0.12em", fontFamily: C.mono, fontWeight: 700 }}>AUTO-SCAN</span>
-            <span style={{ color: C.dim, fontSize: "0.53rem", fontFamily: C.mono }}>S&P 500</span>
-          </div>
-          <p style={{ color: C.dim, fontSize: "0.55rem", fontFamily: C.mono, lineHeight: 1.5, marginBottom: 10 }}>
-            Step 1: Scans all 11 S&P sector ETFs. Step 2: Drills into the hottest and coldest sectors to find individual stock plays.
-          </p>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}>
-            <label style={{ color: C.dim, fontSize: "0.53rem", fontFamily: C.mono }}>MIN SCORE</label>
-            <input type="number" value={minScore} onChange={e => setMinScore(Number(e.target.value))}
-              min={30} max={90} step={5}
-              style={{ width: 60, background: "#090f09", border: `1px solid ${C.border}`, borderRadius: 5, padding: "5px 8px", color: C.light, fontFamily: C.mono, fontSize: "0.75rem" }} />
-            <span style={{ color: C.dim, fontSize: "0.5rem", fontFamily: C.mono }}>
-              {minScore >= 72 ? "STRONG LONG only" : minScore >= 58 ? "LONG BIAS+" : minScore >= 43 ? "includes NEUTRAL" : "wide net"}
-            </span>
-          </div>
-          <button onClick={autoScan} disabled={autoScanning || loading} style={{
-            width: "100%",
-            background: autoScanning ? "#0a120a" : "linear-gradient(135deg,#0d2e18,#0f3820)",
-            border: `1px solid ${autoScanning ? C.border : C.green}`,
-            color: autoScanning ? C.dim : C.green,
-            borderRadius: 7, padding: "10px 0", fontSize: "0.7rem", letterSpacing: "0.12em", fontWeight: 700,
-          }}>
-            {autoScanning
-              ? <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-                  <Spinner /> {scanProgress.phase || "Scanning"} · {scanProgress.done}/{scanProgress.total} · {scanProgress.found} signals
-                </span>
-              : "AUTO-SCAN TOP SIGNALS"
-            }
-          </button>
-        </div>
-
-        <div style={{ color: C.dim, fontSize: "0.5rem", fontFamily: C.mono, textAlign: "center", marginBottom: 8, letterSpacing: "0.1em" }}>— OR SCAN A WATCHLIST —</div>
-
-        <button onClick={scan} disabled={loading} style={{
-          width: "100%",
-          background: loading ? "#0a120a" : "linear-gradient(135deg,#0d2e18,#0f3820)",
-          border: `1px solid ${loading ? C.border : C.green}`,
-          color: loading ? C.dim : C.green,
-          borderRadius: 7, padding: "12px 0", fontSize: "0.75rem", letterSpacing: "0.15em", fontWeight: 700,
-        }}>
-          {loading
-            ? <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
-                <Spinner /> Scanning {progress.done}/{progress.total}
-              </span>
-            : "SCAN WATCHLIST"
-          }
-        </button>
 
         {error && <p style={{ color: C.red, fontSize: "0.62rem", fontFamily: C.mono, marginTop: 10 }}>! {error}</p>}
         {!loading && !autoScanning && results && scanTime && (
@@ -465,39 +593,45 @@ export default function ScreenerScreen({ onSelectTicker }) {
         )}
       </Card>
 
-      {/* Sector Heatmap */}
-      <Suspense fallback={<Card><LazyInlineFallback label="LOADING HEATMAP" /></Card>}>
-        <SectorHeatmap />
-      </Suspense>
-
-      {/* Results */}
       {sorted && (
         <Card>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <SecHead left={`${sorted.length} RESULTS`} />
-              {scanTime && <span style={{ color: C.dim, fontSize: "0.5rem", fontFamily: C.mono }}>
-                {scanTime.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}
-              </span>}
+          <SecHead left="SCAN RESULTS" right={scanTime ? scanTime.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : null} />
+
+          {resultSummary && (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+              <Chip label={`BEST ${resultSummary.strongest.ticker} S${resultSummary.strongest.score}`} color={C.green} bg="#0b2214" bd={`${C.green}40`} />
+              <Chip label={`LONG ${resultSummary.longCount}`} color={C.green} bg="#0b2214" bd={`${C.green}40`} />
+              <Chip label={`SHORT ${resultSummary.shortCount}`} color={C.red} bg="#1a0808" bd={`${C.red}40`} />
+              <Chip label={`NEUTRAL ${resultSummary.neutralCount}`} color={C.yellow} bg="#191400" bd="#504400" />
+              <Chip label={`SOURCE ${sourceLabel}`} color={C.cyan} bg="#051414" bd={`${C.cyan}35`} />
             </div>
-            <div style={{ display: "flex", gap: 6 }}>
-              {["score", "confidence", "rsi", "volume", "mtf"].map(s => (
-                <button key={s} onClick={() => setSortBy(s)} style={{
-                  background: sortBy === s ? "#0d2a18" : "transparent",
-                  border: `1px solid ${sortBy === s ? C.green : C.border}`,
-                  color: sortBy === s ? C.green : C.dim,
-                  borderRadius: 4, padding: "3px 8px", fontSize: "0.55rem", fontFamily: C.mono,
-                }}>
-                  {s.toUpperCase()}
-                </button>
-              ))}
-              {sorted && sorted.length > 0 && scanTime && (
-                <Suspense fallback={<LazyInlineFallback label="LOADING VIDEO" />}>
-                  <VideoExportButton type="leaderboard"
-                    props={buildLeaderboardVideoProps(sorted, scanTime)}
-                    label="VIDEO" />
-                </Suspense>
-              )}
+          )}
+
+          <div style={{ background: "#0a120a", border: `1px solid ${C.border}`, borderRadius: 8, padding: "12px 14px", marginBottom: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10, alignItems: "start" }}>
+              <div>
+                <div style={{ color: C.dim, fontSize: "0.5rem", letterSpacing: "0.1em", fontFamily: C.mono, marginBottom: 5 }}>HOW TO USE THIS LIST</div>
+                <div style={{ color: C.mid, fontSize: "0.57rem", fontFamily: C.mono, lineHeight: 1.55 }}>
+                  Top rows are your strongest current setups. Tap any ticker to open the full analysis page with trade plan, evidence, and history.
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                {resultsConfirmTimeframe && mtfSummary && (
+                  <>
+                    <Chip label={`${resultsConfirmTimeframe} ALIGNED ${mtfSummary.ALIGNED || 0}`} color={C.green} bg="#0b2214" bd={`${C.green}40`} />
+                    <Chip label={`${resultsConfirmTimeframe} CONFLICT ${mtfSummary.CONFLICT || 0}`} color={C.red} bg="#1a0808" bd={`${C.red}40`} />
+                  </>
+                )}
+                {sorted.length > 0 && scanTime && (
+                  <Suspense fallback={<LazyInlineFallback label="LOADING VIDEO" />}>
+                    <VideoExportButton
+                      type="leaderboard"
+                      props={buildLeaderboardVideoProps(sorted, scanTime)}
+                      label="VIDEO FOR X"
+                    />
+                  </Suspense>
+                )}
+              </div>
             </div>
           </div>
 
@@ -513,55 +647,97 @@ export default function ScreenerScreen({ onSelectTicker }) {
           )}
 
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {sorted.map((r, i) => {
-              const meta = SIGNALS[r.signal] || SIGNALS["NEUTRAL"];
-              const mtfChip = getMtfChipProps(r.mtf);
+            {sorted.map((result, index) => {
+              const meta = SIGNALS[result.signal] || SIGNALS.NEUTRAL;
+              const mtfChip = getMtfChipProps(result.mtf);
               return (
-                <button key={r.ticker} onClick={() => onSelectTicker && onSelectTicker(r)}
+                <button
+                  key={result.ticker}
+                  onClick={() => onSelectTicker && onSelectTicker(result)}
                   style={{
-                    background: "#090f09", border: `1px solid ${C.border}`, borderRadius: 7,
-                    padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center",
-                    textAlign: "left", width: "100%",
-                  }}>
-                  <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 6 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-                      <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-                        <span style={{ color: C.dim, fontSize: "0.55rem", fontFamily: C.mono, minWidth: 16 }}>#{i + 1}</span>
-                        <span style={{ color: C.light, fontFamily: C.raj, fontSize: "0.95rem", fontWeight: 700, minWidth: 52 }}>{r.ticker}</span>
-                        <Chip label={r.signal || "ERR"} color={meta.color} bg={meta.color + "18"} bd={meta.color + "40"} />
-                        {mtfChip && <Chip {...mtfChip} />}
-                      </div>
-                      <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
-                        {r.error
-                          ? <span style={{ color: C.red, fontSize: "0.55rem", fontFamily: C.mono }}>err</span>
-                          : <>
-                              <span style={{ color: C.dim, fontSize: "0.58rem", fontFamily: C.mono }}>S{r.score}</span>
-                              <span style={{ color: C.dim, fontSize: "0.58rem", fontFamily: C.mono }}>C{r.confidence}%</span>
-                              <span style={{ color: r.rsi > 70 ? C.red : r.rsi < 30 ? C.green : C.dim, fontSize: "0.58rem", fontFamily: C.mono }}>R{Number(r.rsi).toFixed(0)}</span>
-                              <span style={{ color: C.dim, fontSize: "0.58rem", fontFamily: C.mono }}>${r.entry}</span>
-                            </>
-                        }
-                      </div>
+                    background: "#090f09",
+                    border: `1px solid ${C.border}`,
+                    borderRadius: 8,
+                    padding: "12px 14px",
+                    textAlign: "left",
+                    width: "100%",
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 8 }}>
+                    <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                      <span style={{ color: C.dim, fontSize: "0.55rem", fontFamily: C.mono, minWidth: 16 }}>#{index + 1}</span>
+                      <span style={{ color: C.light, fontFamily: C.raj, fontSize: "0.98rem", fontWeight: 700, minWidth: 52 }}>{result.ticker}</span>
+                      <Chip label={result.signal || "ERR"} color={meta.color} bg={meta.color + "18"} bd={meta.color + "40"} />
+                      {mtfChip && <Chip {...mtfChip} />}
                     </div>
-                    {!r.error && r.mtf && r.mtf.status !== "OFF" && (
-                      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
-                        <span style={{ color: C.dim, fontSize: "0.5rem", fontFamily: C.mono, lineHeight: 1.4 }}>
-                          {r.mtf.signal
-                            ? `${r.timeframe}: ${r.signal} | ${r.mtf.timeframe}: ${r.mtf.signal}`
-                            : `${r.mtf.timeframe}: confirmation unavailable`}
-                        </span>
-                        <span style={{ color: r.mtf.status === "ALIGNED" ? C.green : r.mtf.status === "CONFLICT" ? C.red : C.yellow, fontSize: "0.5rem", fontFamily: C.mono, whiteSpace: "nowrap" }}>
-                          {r.mtf.message}
-                        </span>
-                      </div>
-                    )}
+                    <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                      {result.error
+                        ? <span style={{ color: C.red, fontSize: "0.55rem", fontFamily: C.mono }}>err</span>
+                        : <>
+                            <span style={{ color: C.dim, fontSize: "0.58rem", fontFamily: C.mono }}>SCORE {result.score}</span>
+                            <span style={{ color: C.dim, fontSize: "0.58rem", fontFamily: C.mono }}>CONF {result.confidence}%</span>
+                            <span style={{ color: result.rsi > 70 ? C.red : result.rsi < 30 ? C.green : C.dim, fontSize: "0.58rem", fontFamily: C.mono }}>RSI {Number(result.rsi).toFixed(0)}</span>
+                            <span style={{ color: C.dim, fontSize: "0.58rem", fontFamily: C.mono }}>PX ${result.entry}</span>
+                          </>}
+                    </div>
                   </div>
+
+                  {!result.error && (
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 6, marginBottom: result.mtf && result.mtf.status !== "OFF" ? 6 : 0 }}>
+                      <div style={{ color: C.dim, fontSize: "0.54rem", fontFamily: C.mono }}>Bias: <span style={{ color: meta.color }}>{result.signal}</span></div>
+                      <div style={{ color: C.dim, fontSize: "0.54rem", fontFamily: C.mono }}>Volume: <span style={{ color: C.light }}>{result.vol}x</span></div>
+                      <div style={{ color: C.dim, fontSize: "0.54rem", fontFamily: C.mono }}>ADX: <span style={{ color: C.light }}>{result.adx}</span></div>
+                      <div style={{ color: C.dim, fontSize: "0.54rem", fontFamily: C.mono }}>Tap to open full setup</div>
+                    </div>
+                  )}
+
+                  {!result.error && result.mtf && result.mtf.status !== "OFF" && (
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                      <span style={{ color: C.dim, fontSize: "0.5rem", fontFamily: C.mono, lineHeight: 1.4 }}>
+                        {result.mtf.signal
+                          ? `${result.timeframe}: ${result.signal} | ${result.mtf.timeframe}: ${result.mtf.signal}`
+                          : `${result.mtf.timeframe}: confirmation unavailable`}
+                      </span>
+                      <span style={{ color: result.mtf.status === "ALIGNED" ? C.green : result.mtf.status === "CONFLICT" ? C.red : C.yellow, fontSize: "0.5rem", fontFamily: C.mono, whiteSpace: "nowrap" }}>
+                        {result.mtf.message}
+                      </span>
+                    </div>
+                  )}
                 </button>
               );
             })}
           </div>
         </Card>
       )}
+
+      <Card>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+          <SecHead left="OPTIONAL SECTOR HEATMAP" right="BREADTH CHECK" />
+          <button
+            onClick={() => setShowHeatmap((value) => !value)}
+            style={{
+              background: showHeatmap ? "#0d2a18" : "transparent",
+              border: `1px solid ${showHeatmap ? C.green : C.border}`,
+              color: showHeatmap ? C.green : C.dim,
+              borderRadius: 5,
+              padding: "5px 12px",
+              fontSize: "0.58rem",
+              fontFamily: C.mono,
+              fontWeight: 700,
+            }}
+          >
+            {showHeatmap ? "HIDE HEATMAP" : "SHOW HEATMAP"}
+          </button>
+        </div>
+        <p style={{ color: C.dim, fontSize: "0.56rem", fontFamily: C.mono, lineHeight: 1.55, marginBottom: showHeatmap ? 12 : 0 }}>
+          Use this after the main screener if you want a quick view of sector breadth. It is context, not the main workflow.
+        </p>
+        {showHeatmap && (
+          <Suspense fallback={<LazyInlineFallback label="LOADING HEATMAP" />}>
+            <SectorHeatmap />
+          </Suspense>
+        )}
+      </Card>
     </div>
   );
 }

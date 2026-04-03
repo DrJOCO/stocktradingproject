@@ -12,9 +12,9 @@ const SIGNAL_COLORS = {
   "SHORT BIAS": C.purple, "STRONG SHORT": C.red,
 };
 
-export const SignalCardVideo = ({ ticker, signal, confidence, score, entry, stop, target,
+export const SignalCardVideo = ({ ticker, timeframe, signal, confidence, score, entry, stop, target,
   stopPct, tgtPct, rsi, macdDir, adx, vol, aboveVWAP,
-  commentary, indicators = [] }) => {
+  commentary, heroLead, suggestion, indicators = [] }) => {
 
   const frame = useCurrentFrame();
   const signalColor = SIGNAL_COLORS[signal] || C.yellow;
@@ -37,9 +37,10 @@ export const SignalCardVideo = ({ ticker, signal, confidence, score, entry, stop
           <div>
             <div style={{ color: C.dim, fontSize: 14, letterSpacing: 3, marginBottom: 4 }}>ACTION SIGNAL</div>
             <div style={{ fontFamily: fontD, fontSize: 64, fontWeight: 700, color: signalColor, letterSpacing: 2, lineHeight: 1 }}>{signal}</div>
+            {heroLead && <div style={{ color: C.light, fontSize: 18, marginTop: 8, maxWidth: 620 }}>{heroLead}</div>}
           </div>
           <div style={{ textAlign: "right" }}>
-            <div style={{ color: C.dim, fontSize: 14, letterSpacing: 2, marginBottom: 4 }}>{ticker}</div>
+            <div style={{ color: C.dim, fontSize: 14, letterSpacing: 2, marginBottom: 4 }}>{ticker}{timeframe ? ` · ${timeframe}` : ""}</div>
             <div style={{ fontFamily: fontD, fontSize: 72, fontWeight: 700, color: signalColor, lineHeight: 1 }}>
               {Math.round(confAnim)}%
             </div>
@@ -58,6 +59,11 @@ export const SignalCardVideo = ({ ticker, signal, confidence, score, entry, stop
           background: signalColor + "10", border: `1px solid ${signalColor}30`, borderRadius: 10,
           padding: "12px 18px", marginBottom: 20 }}>
           <p style={{ color: C.light, fontSize: 16, lineHeight: 1.6, margin: 0 }}>{commentary}</p>
+          {suggestion && (
+            <p style={{ color: C.mid, fontSize: 14, lineHeight: 1.5, margin: "8px 0 0" }}>
+              Plan: {suggestion}
+            </p>
+          )}
         </div>
       )}
 

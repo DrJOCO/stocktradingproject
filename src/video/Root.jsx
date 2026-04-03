@@ -5,10 +5,12 @@ import { SectorHeatmapVideo } from "./SectorHeatmapVideo.jsx";
 
 // Default props for Remotion Studio preview
 const defaultSignalProps = {
-  ticker: "NVDA", signal: "STRONG LONG", confidence: 84, score: 78,
+  ticker: "NVDA", timeframe: "1D", signal: "STRONG LONG", confidence: 84, score: 78,
   entry: 142.50, stop: 135.20, target: 156.80, stopPct: "5.1", tgtPct: "10.0",
   rsi: 62, macdDir: "Bull", adx: 32, vol: 1.8, atrPct: 2.4, aboveVWAP: true, supertrend: true,
   commentary: "High conviction bullish. Buy dips into support. Trend is strong — let it run. Heavy volume — institutional activity.",
+  heroLead: "Majority of indicators bullish.",
+  suggestion: "Consider long entry with stop below support.",
   indicators: [
     { label: "Full bull stack: price > EMA21 > EMA50 > SMA200", status: "pass" },
     { label: "Supertrend bullish — price above support", status: "pass" },

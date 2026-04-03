@@ -1,6 +1,7 @@
 export function buildSignalVideoProps(d, analysis) {
   return {
     ticker: d.ticker,
+    timeframe: d.timeframe,
     signal: d.signal,
     confidence: d.confidence,
     score: d.score,
@@ -17,6 +18,8 @@ export function buildSignalVideoProps(d, analysis) {
     aboveVWAP: d.aboveVWAP,
     supertrend: d.supertrend,
     commentary: analysis?.commentary || "",
+    heroLead: analysis?.heroLead || "",
+    suggestion: analysis?.suggestion || "",
     indicators: (d.indicators || []).slice(0, 6),
   };
 }

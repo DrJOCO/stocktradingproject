@@ -28,8 +28,14 @@ function resolveYahooSymbol(ticker, assetType) {
 
 function buildChartUrl(symbol, params) {
   const search = new URLSearchParams(params);
-  if (import.meta.env.DEV) {
+  const isBrowser = typeof window !== "undefined";
+  const isDev = isBrowser && !!import.meta.env?.DEV;
+  if (isDev) {
     return `/yahoo/v8/finance/chart/${encodeURIComponent(symbol)}?${search.toString()}`;
+  }
+
+  if (!isBrowser) {
+    return `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?${search.toString()}`;
   }
 
   search.set("symbol", symbol);
@@ -38,8 +44,14 @@ function buildChartUrl(symbol, params) {
 
 function buildQuoteSummaryUrl(symbol, modules) {
   const search = new URLSearchParams({ modules });
-  if (import.meta.env.DEV) {
+  const isBrowser = typeof window !== "undefined";
+  const isDev = isBrowser && !!import.meta.env?.DEV;
+  if (isDev) {
     return `/yahoo2/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?${search.toString()}`;
+  }
+
+  if (!isBrowser) {
+    return `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?${search.toString()}`;
   }
 
   search.set("symbol", symbol);

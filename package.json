@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "test": "node --test",
     "preview": "vite preview",
+    "morning-brief": "node scripts/morning-brief.mjs",
     "studio": "remotion studio src/video/index.js",
     "render-signal": "remotion render src/video/index.js SignalCard out/signal-card.mp4",
     "render-leaderboard": "remotion render src/video/index.js Leaderboard out/leaderboard.mp4",
