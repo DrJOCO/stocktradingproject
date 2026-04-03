@@ -15,6 +15,7 @@ import { checkAlerts } from "./utils/alerts.js";
 import { addRecentAnalysis, getRecentAnalyses, subscribeStorage } from "./utils/storage.js";
 
 const ScreenerScreen = lazy(() => import("./components/ScreenerScreen.jsx"));
+const MorningBriefScreen = lazy(() => import("./components/MorningBriefScreen.jsx"));
 const PortfolioScreen = lazy(() => import("./components/PortfolioScreen.jsx"));
 const JournalScreen = lazy(() => import("./components/JournalScreen.jsx"));
 const PositionSizer = lazy(() => import("./components/PositionSizer.jsx"));
@@ -212,6 +213,17 @@ export default function App() {
       handleResult(card, card.analysis, "US Stock");
     }
   };
+
+  const handleOpenTicker = useCallback(async (ticker, timeframe, at) => {
+    try {
+      const raw = await fetchCandleData(ticker, timeframe, at);
+      const signal = buildSignalCard(ticker, timeframe, raw);
+      setTab("analyze");
+      await handleResult(signal, signal.analysis, at, raw);
+    } catch (openError) {
+      setError(openError.message || "Failed to open ticker setup.");
+    }
+  }, [handleResult]);
 
   // Manual refresh
   const refresh = async () => {
@@ -442,6 +454,7 @@ export default function App() {
         {!result && (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8 }}>
             <TabBtn id="analyze" label="ANALYZE" />
+            <TabBtn id="brief" label="BRIEF" />
             <TabBtn id="screener" label="SCREENER" />
             <TabBtn id="portfolio" label="PORTFOLIO" />
             <TabBtn id="journal" label="JOURNAL" />
@@ -456,6 +469,7 @@ export default function App() {
         <ErrorBoundary resetKey={`${tab}:${result?.ticker || "none"}`} onReset={reset}>
           <Suspense fallback={<SectionFallback label="LOADING SCREEN" />}>
           {tab === "analyze" && !result && <AnalyzeScreen onResult={handleResult} onError={setError} recentAnalyses={recentAnalyses} />}
+          {tab === "brief" && !result && <MorningBriefScreen onOpenTicker={handleOpenTicker} />}
           {tab === "screener" && !result && <ScreenerScreen key={`screener:${storageVersion}`} onSelectTicker={handleScreenerSelect} />}
           {tab === "portfolio" && !result && <PortfolioScreen />}
           {tab === "journal" && !result && <JournalScreen key={`journal:${storageVersion}`} />}

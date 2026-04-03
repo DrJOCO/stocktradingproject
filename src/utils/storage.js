@@ -18,6 +18,27 @@ const DEFAULT_SCREENER_STATE = {
   scanTime: null,
 };
 
+const DEFAULT_MORNING_BRIEF_STATE = {
+  source: "Mega Cap Tech",
+  customTickers: "",
+  timeframe: "1D",
+  confirmMode: "AUTO",
+  sortBy: "score",
+  topCount: 3,
+  limit: 10,
+  sourceLabel: "Mega Cap Tech",
+  tickers: [],
+  assetType: "US Stock",
+  scannedCount: 0,
+  failures: [],
+  results: null,
+  topResults: null,
+  summaryPost: "",
+  threadStarter: "",
+  replyDrafts: [],
+  runTime: null,
+};
+
 const DEFAULT_ACCOUNT = { size: 25000, riskPct: 2 };
 const DEFAULT_PORTFOLIO_POSITIONS = [];
 const DEFAULT_RECENT_ANALYSES = [];
@@ -87,6 +108,7 @@ function buildLocalBundle() {
     watchlists: getWatchlists(),
     lastWatchlist: getLastWatchlist(),
     screenerState: getScreenerState(),
+    morningBriefState: getMorningBriefState(),
     account: getAccountSettings(),
     alerts: getAlerts(),
     trades: getTrades(),
@@ -100,6 +122,7 @@ function normalizeBundle(data = {}) {
     watchlists: data.watchlists && typeof data.watchlists === "object" ? data.watchlists : {},
     lastWatchlist: typeof data.lastWatchlist === "string" ? data.lastWatchlist : null,
     screenerState: { ...DEFAULT_SCREENER_STATE, ...(data.screenerState || {}) },
+    morningBriefState: { ...DEFAULT_MORNING_BRIEF_STATE, ...(data.morningBriefState || {}) },
     account: { ...DEFAULT_ACCOUNT, ...(data.account || {}) },
     alerts: Array.isArray(data.alerts) ? data.alerts : [],
     trades: Array.isArray(data.trades) ? data.trades : [],
@@ -116,6 +139,7 @@ function buildPersistedState(bundle, updatedAt = new Date().toISOString()) {
     watchlists: bundle.watchlists || {},
     lastWatchlist: bundle.lastWatchlist || null,
     screenerState: { ...DEFAULT_SCREENER_STATE, ...(bundle.screenerState || {}) },
+    morningBriefState: { ...DEFAULT_MORNING_BRIEF_STATE, ...(bundle.morningBriefState || {}) },
     account: { ...DEFAULT_ACCOUNT, ...(bundle.account || {}) },
     alerts: Array.isArray(bundle.alerts) ? bundle.alerts : [],
     trades: Array.isArray(bundle.trades) ? bundle.trades : [],
@@ -131,6 +155,8 @@ function hasMeaningfulLocalState(bundle) {
   if (bundle.screenerState?.customTickers) return true;
   if (bundle.screenerState?.results) return true;
   if (bundle.screenerState?.scanTime) return true;
+  if (bundle.morningBriefState?.results?.length) return true;
+  if (bundle.morningBriefState?.runTime) return true;
   if ((bundle.account?.size ?? DEFAULT_ACCOUNT.size) !== DEFAULT_ACCOUNT.size) return true;
   if ((bundle.account?.riskPct ?? DEFAULT_ACCOUNT.riskPct) !== DEFAULT_ACCOUNT.riskPct) return true;
   if (bundle.alerts?.length) return true;
@@ -164,6 +190,7 @@ function applyBundleToLocal(bundle, origin = "cloud") {
     setRaw("watchlists", normalized.watchlists);
     setRaw("lastWatchlist", normalized.lastWatchlist);
     setRaw("screenerState", normalized.screenerState);
+    setRaw("morningBriefState", normalized.morningBriefState);
     setRaw("account", normalized.account);
     setRaw("alerts", normalized.alerts);
     setRaw("trades", normalized.trades);
@@ -174,7 +201,7 @@ function applyBundleToLocal(bundle, origin = "cloud") {
     applyingCloudState = false;
   }
 
-  emitStorageEvent(origin, ["watchlists", "lastWatchlist", "screenerState", "account", "alerts", "trades", "portfolioPositions", "recentAnalyses"]);
+  emitStorageEvent(origin, ["watchlists", "lastWatchlist", "screenerState", "morningBriefState", "account", "alerts", "trades", "portfolioPositions", "recentAnalyses"]);
 }
 
 function writeKey(key, value, origin = "local") {
@@ -294,6 +321,20 @@ export function saveScreenerState(state) {
 
 export function clearScreenerState() {
   removeKey("screenerState");
+}
+
+// --- Morning Brief ---
+export function getMorningBriefState() {
+  return { ...DEFAULT_MORNING_BRIEF_STATE, ...(getRaw("morningBriefState", DEFAULT_MORNING_BRIEF_STATE) || {}) };
+}
+
+export function saveMorningBriefState(state) {
+  writeKey("morningBriefState", { ...DEFAULT_MORNING_BRIEF_STATE, ...state });
+  return state;
+}
+
+export function clearMorningBriefState() {
+  removeKey("morningBriefState");
 }
 
 // --- Account Settings ---
