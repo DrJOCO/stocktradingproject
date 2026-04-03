@@ -42,7 +42,9 @@ const DEFAULT_MORNING_BRIEF_STATE = {
 const DEFAULT_ACCOUNT = { size: 25000, riskPct: 2 };
 const DEFAULT_PORTFOLIO_POSITIONS = [];
 const DEFAULT_RECENT_ANALYSES = [];
+const DEFAULT_MORNING_BRIEF_HISTORY = [];
 const MAX_RECENT_ANALYSES = 40;
+const MAX_MORNING_BRIEF_HISTORY = 20;
 
 let cloudUserId = null;
 let cloudUnsubscribe = null;
@@ -109,6 +111,7 @@ function buildLocalBundle() {
     lastWatchlist: getLastWatchlist(),
     screenerState: getScreenerState(),
     morningBriefState: getMorningBriefState(),
+    morningBriefHistory: getMorningBriefHistory(),
     account: getAccountSettings(),
     alerts: getAlerts(),
     trades: getTrades(),
@@ -123,6 +126,7 @@ function normalizeBundle(data = {}) {
     lastWatchlist: typeof data.lastWatchlist === "string" ? data.lastWatchlist : null,
     screenerState: { ...DEFAULT_SCREENER_STATE, ...(data.screenerState || {}) },
     morningBriefState: { ...DEFAULT_MORNING_BRIEF_STATE, ...(data.morningBriefState || {}) },
+    morningBriefHistory: Array.isArray(data.morningBriefHistory) ? data.morningBriefHistory.slice(0, MAX_MORNING_BRIEF_HISTORY) : DEFAULT_MORNING_BRIEF_HISTORY,
     account: { ...DEFAULT_ACCOUNT, ...(data.account || {}) },
     alerts: Array.isArray(data.alerts) ? data.alerts : [],
     trades: Array.isArray(data.trades) ? data.trades : [],
@@ -140,6 +144,7 @@ function buildPersistedState(bundle, updatedAt = new Date().toISOString()) {
     lastWatchlist: bundle.lastWatchlist || null,
     screenerState: { ...DEFAULT_SCREENER_STATE, ...(bundle.screenerState || {}) },
     morningBriefState: { ...DEFAULT_MORNING_BRIEF_STATE, ...(bundle.morningBriefState || {}) },
+    morningBriefHistory: Array.isArray(bundle.morningBriefHistory) ? bundle.morningBriefHistory.slice(0, MAX_MORNING_BRIEF_HISTORY) : DEFAULT_MORNING_BRIEF_HISTORY,
     account: { ...DEFAULT_ACCOUNT, ...(bundle.account || {}) },
     alerts: Array.isArray(bundle.alerts) ? bundle.alerts : [],
     trades: Array.isArray(bundle.trades) ? bundle.trades : [],
@@ -157,6 +162,7 @@ function hasMeaningfulLocalState(bundle) {
   if (bundle.screenerState?.scanTime) return true;
   if (bundle.morningBriefState?.results?.length) return true;
   if (bundle.morningBriefState?.runTime) return true;
+  if (bundle.morningBriefHistory?.length) return true;
   if ((bundle.account?.size ?? DEFAULT_ACCOUNT.size) !== DEFAULT_ACCOUNT.size) return true;
   if ((bundle.account?.riskPct ?? DEFAULT_ACCOUNT.riskPct) !== DEFAULT_ACCOUNT.riskPct) return true;
   if (bundle.alerts?.length) return true;
@@ -191,6 +197,7 @@ function applyBundleToLocal(bundle, origin = "cloud") {
     setRaw("lastWatchlist", normalized.lastWatchlist);
     setRaw("screenerState", normalized.screenerState);
     setRaw("morningBriefState", normalized.morningBriefState);
+    setRaw("morningBriefHistory", normalized.morningBriefHistory);
     setRaw("account", normalized.account);
     setRaw("alerts", normalized.alerts);
     setRaw("trades", normalized.trades);
@@ -201,7 +208,7 @@ function applyBundleToLocal(bundle, origin = "cloud") {
     applyingCloudState = false;
   }
 
-  emitStorageEvent(origin, ["watchlists", "lastWatchlist", "screenerState", "morningBriefState", "account", "alerts", "trades", "portfolioPositions", "recentAnalyses"]);
+  emitStorageEvent(origin, ["watchlists", "lastWatchlist", "screenerState", "morningBriefState", "morningBriefHistory", "account", "alerts", "trades", "portfolioPositions", "recentAnalyses"]);
 }
 
 function writeKey(key, value, origin = "local") {
@@ -335,6 +342,37 @@ export function saveMorningBriefState(state) {
 
 export function clearMorningBriefState() {
   removeKey("morningBriefState");
+}
+
+export function getMorningBriefHistory() {
+  return getRaw("morningBriefHistory", DEFAULT_MORNING_BRIEF_HISTORY);
+}
+
+export function saveMorningBriefHistory(entries) {
+  const normalized = Array.isArray(entries) ? entries.slice(0, MAX_MORNING_BRIEF_HISTORY) : DEFAULT_MORNING_BRIEF_HISTORY;
+  writeKey("morningBriefHistory", normalized);
+  return normalized;
+}
+
+export function addMorningBriefRun(entry) {
+  if (!entry?.runTime) return getMorningBriefHistory();
+
+  const nextEntry = {
+    id: entry.id || `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    ...entry,
+  };
+
+  const entries = [
+    nextEntry,
+    ...getMorningBriefHistory().filter((item) => item.runTime !== nextEntry.runTime),
+  ].slice(0, MAX_MORNING_BRIEF_HISTORY);
+
+  saveMorningBriefHistory(entries);
+  return entries;
+}
+
+export function clearMorningBriefHistory() {
+  removeKey("morningBriefHistory");
 }
 
 // --- Account Settings ---

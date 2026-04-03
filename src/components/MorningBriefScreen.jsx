@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { C, Card, Chip, SecHead, Spinner, UI, inputStyle, selectStyle, primaryButtonStyle } from "./ui.jsx";
 import { buildLeaderboardVideoProps } from "./videoExportProps.js";
 import { BUILTIN_BRIEF_WATCHLISTS, runMorningBrief } from "../lib/morningBrief.js";
-import { getMorningBriefState, saveMorningBriefState } from "../utils/storage.js";
+import { addMorningBriefRun, getMorningBriefHistory, getMorningBriefState, saveMorningBriefState, subscribeStorage } from "../utils/storage.js";
 
 const SORT_OPTIONS = [
   { id: "score", label: "BEST SCORE" },
@@ -110,7 +110,13 @@ export default function MorningBriefScreen({ onOpenTicker }) {
   const [error, setError] = useState(null);
   const [progress, setProgress] = useState({ done: 0, total: 0, ticker: "" });
   const [brief, setBrief] = useState(persisted);
+  const [history, setHistory] = useState(() => getMorningBriefHistory());
   const postPack = useMemo(() => buildPostPack(brief || {}), [brief]);
+
+  useEffect(() => subscribeStorage(({ keys }) => {
+    if (keys?.includes("morningBriefState")) setBrief(getMorningBriefState());
+    if (keys?.includes("morningBriefHistory")) setHistory(getMorningBriefHistory());
+  }), []);
 
   useEffect(() => {
     saveMorningBriefState({
@@ -149,6 +155,7 @@ export default function MorningBriefScreen({ onOpenTicker }) {
         failures: next.failures.map((failure) => ({ ticker: failure.ticker, error: failure.error })),
       };
       setBrief(persistedBrief);
+      setHistory(addMorningBriefRun(persistedBrief));
     } catch (runError) {
       setError(runError.message || "Morning brief failed.");
     } finally {
@@ -157,6 +164,17 @@ export default function MorningBriefScreen({ onOpenTicker }) {
   };
 
   const canRun = loading ? false : !!customTickers.trim() || !!BUILTIN_BRIEF_WATCHLISTS[source];
+
+  const loadBrief = (entry) => {
+    setBrief(entry);
+    setSource(entry.source || entry.sourceLabel || "Mega Cap Tech");
+    setCustomTickers(entry.customTickers || "");
+    setTimeframe(entry.timeframe || "1D");
+    setConfirmMode(entry.confirmMode || "AUTO");
+    setSortBy(entry.sortBy || "score");
+    setTopCount(entry.topCount || 3);
+    setLimit(entry.limit || 10);
+  };
 
   return (
     <div className="fade" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -339,6 +357,44 @@ export default function MorningBriefScreen({ onOpenTicker }) {
                     <div style={{ color: C.red, fontSize: "0.58rem", fontFamily: C.mono }}>{failure.ticker}</div>
                     <div style={{ color: C.dim, fontSize: "0.55rem", fontFamily: C.mono, marginTop: 4 }}>{failure.error}</div>
                   </div>
+                ))}
+              </div>
+            </Card>
+          )}
+
+          {!!history.length && (
+            <Card>
+              <SecHead left="BRIEF HISTORY" right={`${history.length} RUNS`} />
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {history.map((entry) => (
+                  <button
+                    key={entry.id || entry.runTime}
+                    onClick={() => loadBrief(entry)}
+                    style={{
+                      background: brief?.runTime === entry.runTime ? "#0d2a18" : "#081008",
+                      border: `1px solid ${brief?.runTime === entry.runTime ? C.green : C.border}`,
+                      borderRadius: 8,
+                      padding: "11px 12px",
+                      textAlign: "left",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                        <Chip label={entry.sourceLabel || entry.source || "Brief"} color={C.green} bg="#0b2214" bd={`${C.green}40`} />
+                        <Chip label={`${entry.timeframe}${entry.confirmTimeframe ? `/${entry.confirmTimeframe}` : ""}`} color={C.cyan} bg="#051414" bd={`${C.cyan}35`} />
+                        <Chip label={`TOP ${entry.topResults?.length || 0}`} color={C.yellow} bg="#191400" bd="#504400" />
+                      </div>
+                      <span style={{ color: C.dim, fontSize: "0.54rem", fontFamily: C.mono }}>
+                        {entry.runTime ? new Date(entry.runTime).toLocaleString() : "No timestamp"}
+                      </span>
+                    </div>
+                    <div style={{ color: C.light, fontSize: "0.6rem", fontFamily: C.mono, lineHeight: 1.6, marginBottom: 4 }}>
+                      {(entry.topResults || []).map((card) => `${card.ticker} ${card.signal} S${card.score}`).join(" • ") || "No top setups stored"}
+                    </div>
+                    <div style={{ color: C.mid, fontSize: "0.54rem", fontFamily: C.mono }}>
+                      {entry.summaryPost || "No summary saved"}
+                    </div>
+                  </button>
                 ))}
               </div>
             </Card>
