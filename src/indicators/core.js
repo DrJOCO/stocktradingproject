@@ -15,41 +15,56 @@ export function calcEMA(closes, period) {
   return ema;
 }
 
-// RSI with Wilder's smoothing (the standard method)
-export function calcRSI(closes, period = 14) {
-  if (closes.length < period + 1) return 50;
-  let gains = 0, losses = 0;
+function roundOne(value) {
+  return parseFloat(value.toFixed(1));
+}
 
-  // First average
+function rsiFromAverages(avgGain, avgLoss) {
+  if (avgLoss === 0) return 100;
+  const rs = avgGain / avgLoss;
+  return roundOne(100 - 100 / (1 + rs));
+}
+
+// Wilder RSI series so downstream indicators can reuse one pass instead of recalculating slices.
+export function calcRSISeries(closes, period = 14) {
+  const series = Array(closes.length).fill(null);
+  if (closes.length < period + 1) return series;
+
+  let gains = 0;
+  let losses = 0;
+
   for (let i = 1; i <= period; i++) {
     const delta = closes[i] - closes[i - 1];
     if (delta > 0) gains += delta;
     else losses += Math.abs(delta);
   }
+
   let avgGain = gains / period;
   let avgLoss = losses / period;
+  series[period] = rsiFromAverages(avgGain, avgLoss);
 
-  // Wilder's smoothing for remaining values
   for (let i = period + 1; i < closes.length; i++) {
     const delta = closes[i] - closes[i - 1];
     avgGain = (avgGain * (period - 1) + (delta > 0 ? delta : 0)) / period;
     avgLoss = (avgLoss * (period - 1) + (delta < 0 ? Math.abs(delta) : 0)) / period;
+    series[i] = rsiFromAverages(avgGain, avgLoss);
   }
 
-  if (avgLoss === 0) return 100;
-  const rs = avgGain / avgLoss;
-  return parseFloat((100 - 100 / (1 + rs)).toFixed(1));
+  return series;
+}
+
+// RSI with Wilder's smoothing (the standard method)
+export function calcRSI(closes, period = 14) {
+  const series = calcRSISeries(closes, period);
+  const value = series[series.length - 1];
+  return value ?? 50;
 }
 
 // Stochastic RSI with proper K and D smoothing
 export function calcStochRSI(closes, rsiPeriod = 14, stochPeriod = 14, kSmooth = 3, dSmooth = 3) {
   if (closes.length < rsiPeriod + stochPeriod + kSmooth) return { k: 50, d: 50 };
 
-  // Build RSI series
-  const rsiSeries = [];
-  for (let i = rsiPeriod + 1; i <= closes.length; i++) {
-    rsiSeries.push(calcRSI(closes.slice(0, i), rsiPeriod));
-  }
+  const rsiSeries = calcRSISeries(closes, rsiPeriod).filter(value => value !== null);
 
   if (rsiSeries.length < stochPeriod) return { k: 50, d: 50 };
 
@@ -193,13 +208,6 @@ export function calcADXFull(highs, lows, closes, period = 14) {
   };
 }
 
-function buildRSISeries(closes, period) {
-  return closes.map((_, index) => {
-    if (index < period) return null;
-    return calcRSI(closes.slice(0, index + 1), period);
-  });
-}
-
 function findPivotIndexes(values, mode, lookback, strength = 2) {
   const start = Math.max(strength, values.length - lookback);
   const end = values.length - strength;
@@ -229,7 +237,7 @@ export function calcRSIDivergence(closes, highs, lows, period = 14, lookback = 3
     return { bullishDiv: false, bearishDiv: false, type: null };
   }
 
-  const rsiSeries = buildRSISeries(closes, period);
+  const rsiSeries = calcRSISeries(closes, period);
   const lowPivots = findPivotIndexes(lows, "low", lookback);
   const highPivots = findPivotIndexes(highs, "high", lookback);
 
@@ -265,24 +273,50 @@ export function calcRSIDivergence(closes, highs, lows, period = 14, lookback = 3
   };
 }
 
-export function calcATR(highs, lows, closes, period = 14) {
-  if (closes.length < 2) return 0;
-  const tr = [];
+export function calcATRSeries(highs, lows, closes, period = 14) {
+  const series = Array(closes.length).fill(null);
+  if (closes.length < 2) return series;
+
+  const trueRanges = Array(closes.length).fill(null);
   for (let i = 1; i < closes.length; i++) {
-    tr.push(Math.max(
+    trueRanges[i] = Math.max(
       highs[i] - lows[i],
       Math.abs(highs[i] - closes[i - 1]),
       Math.abs(lows[i] - closes[i - 1])
-    ));
+    );
   }
-  if (tr.length < period) return tr.reduce((a, b) => a + b, 0) / tr.length;
 
-  // Wilder's smoothing
-  let atr = tr.slice(0, period).reduce((a, b) => a + b, 0) / period;
-  for (let i = period; i < tr.length; i++) {
-    atr = (atr * (period - 1) + tr[i]) / period;
+  const trValues = trueRanges.slice(1).filter(value => value !== null);
+  if (!trValues.length) return series;
+
+  if (trValues.length < period) {
+    let running = 0;
+    for (let i = 1; i < closes.length; i++) {
+      running += trueRanges[i] ?? 0;
+      series[i] = running / i;
+    }
+    return series;
   }
-  return atr;
+
+  let atr = 0;
+  for (let i = 1; i <= period; i++) atr += trueRanges[i] ?? 0;
+  atr /= period;
+  series[period] = atr;
+
+  for (let i = period + 1; i < closes.length; i++) {
+    atr = ((atr * (period - 1)) + (trueRanges[i] ?? 0)) / period;
+    series[i] = atr;
+  }
+
+  return series;
+}
+
+export function calcATR(highs, lows, closes, period = 14) {
+  const series = calcATRSeries(highs, lows, closes, period);
+  for (let i = series.length - 1; i >= 0; i--) {
+    if (typeof series[i] === "number") return series[i];
+  }
+  return 0;
 }
 
 export function calcATRPct(highs, lows, closes, period = 14) {

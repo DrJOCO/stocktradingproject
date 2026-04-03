@@ -1,4 +1,4 @@
-import { AbsoluteFill, useCurrentFrame, useVideoConfig, interpolate, spring, Sequence } from "remotion";
+import { AbsoluteFill, useCurrentFrame, interpolate } from "remotion";
 
 const C = {
   bg: "#070d07", card: "#0b120b", border: "#182818",
@@ -13,11 +13,10 @@ const SIGNAL_COLORS = {
 };
 
 export const SignalCardVideo = ({ ticker, signal, confidence, score, entry, stop, target,
-  stopPct, tgtPct, rsi, macdDir, adx, vol, atrPct, aboveVWAP, supertrend,
+  stopPct, tgtPct, rsi, macdDir, adx, vol, aboveVWAP,
   commentary, indicators = [] }) => {
 
   const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
   const signalColor = SIGNAL_COLORS[signal] || C.yellow;
 
   // Animations
@@ -87,7 +86,7 @@ export const SignalCardVideo = ({ ticker, signal, confidence, score, entry, stop
           { l: "ADX", v: adx, c: adx > 25 ? C.green : C.dim },
           { l: "MACD", v: macdDir, c: macdDir === "Bull" ? C.green : C.red },
           { l: "VOL", v: `${vol}x`, c: vol > 1.5 ? C.green : vol < 0.5 ? C.red : C.mid },
-          { l: "VWAP", v: aboveVWAP ? "ABOVE" : "BELOW", c: aboveVWAP ? C.green : C.red },
+          { l: "rVWAP", v: aboveVWAP ? "ABOVE" : "BELOW", c: aboveVWAP ? C.green : C.red },
         ].map(m => (
           <div key={m.l} style={{ background: "#090f09", border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 14px", textAlign: "center", minWidth: 80 }}>
             <div style={{ color: C.dim, fontSize: 10, letterSpacing: 2, marginBottom: 3 }}>{m.l}</div>

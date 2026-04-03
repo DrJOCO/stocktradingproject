@@ -314,7 +314,7 @@ function buildIndicatorList({
 
   list.push({ label: `Trend score ${score >= 60 ? "supportive" : score >= 45 ? "mixed" : "weak"}: ${score}/100`, type: "CONFIRM", status: score >= 60 ? "pass" : score >= 45 ? "warn" : "fail" });
   list.push({ label: `Supertrend ${supertrend.bullish ? "bullish — price above support" : "bearish — price below resistance"}`, type: "CONFIRM", status: supertrend.bullish ? "pass" : "fail" });
-  list.push({ label: `VWAP ${aboveVWAP ? "above — buyers in control" : "below — sellers in control"}`, type: "CONFIRM", status: aboveVWAP ? "pass" : "fail" });
+  list.push({ label: `Rolling VWAP ${aboveVWAP ? "above — buyers in control" : "below — sellers in control"}`, type: "CONFIRM", status: aboveVWAP ? "pass" : "fail" });
   list.push({ label: `Ichimoku ${ichimoku.aboveCloud ? "above cloud — bullish" : "below cloud — bearish"}`, type: "LEADING", status: ichimoku.aboveCloud ? "pass" : "fail" });
 
   if (macd.bullish) list.push({ label: `MACD bullish + histogram ${macd.hist >= 0 ? "positive" : "recovering"}`, type: "CONFIRM", status: "pass" });
@@ -432,13 +432,13 @@ function buildEarlyWarnings(price, volMult, atrPct, fib, pivot, ote, rsiDiv, ttm
   }
 
   // OTE (Optimal Trade Entry)
-  if (ote && ote.inOTE) {
+  if (ote?.validStructureBreak && ote.inOTE) {
     const dirLabel = ote.direction === "LONG" ? "bullish" : "bearish";
     warnings.push({
       icon: "◆", color: "#22c55e", title: `OTE — OPTIMAL ${ote.direction} ENTRY`, type: "LEADING",
       desc: `Price is in the 62-79% retracement zone ($${ote.oteBottom}-$${ote.oteTop}) of the ${dirLabel} swing ($${ote.swingLow} to $${ote.swingHigh}). Retracement: ${ote.retracementPct}%.${ote.hasFVG ? " Fair Value Gap present — higher probability entry." : ""} This is a high-probability pullback entry point.`,
     });
-  } else if (ote && ote.approaching) {
+  } else if (ote?.validStructureBreak && ote.approaching) {
     warnings.push({
       icon: "◇", color: "#eab308", title: "APPROACHING OTE ZONE", type: "LEADING",
       desc: `Price is nearing the OTE zone ($${ote.oteBottom}-$${ote.oteTop}). ${ote.direction} setup forming. Watch for entry on the next pullback into the zone.`,
@@ -542,8 +542,8 @@ function buildLocalAnalysis({
     cmf > 0.1 ? `Positive CMF (${cmf}) accumulation` :
     heikinAshi.trend === "bullish" && heikinAshi.consecutiveGreen >= 3 ? "Heikin Ashi bullish trend persistence" :
     fullBearStack ? "Full MA bear alignment" :
-    supertrend.bullish && aboveVWAP ? "Supertrend + VWAP bullish" :
-    !supertrend.bullish && !aboveVWAP ? "Supertrend + VWAP bearish" :
+    supertrend.bullish && aboveVWAP ? "Supertrend + rolling VWAP bullish" :
+    !supertrend.bullish && !aboveVWAP ? "Supertrend + rolling VWAP bearish" :
     adx > 30 ? `Strong trend (ADX ${adx})` : "No dominant factor";
 
   const keyRisk = rsiDiv.bearishDiv ? "Bearish RSI divergence — reversal risk" :
@@ -563,7 +563,7 @@ function buildLocalAnalysis({
     ttmSqueeze.firing && ttmSqueeze.momentum > 0 ? "a squeeze firing higher" : null,
     cmf > 0.1 ? "positive CMF accumulation" : null,
     heikinAshi.trend === "bullish" && heikinAshi.consecutiveGreen >= 3 ? "bullish Heikin Ashi persistence" : null,
-    ote && ote.direction === "LONG" && (ote.inOTE || ote.approaching) ? "an OTE long pullback setup" : null,
+    ote?.validStructureBreak && ote.direction === "LONG" && (ote.inOTE || ote.approaching) ? "an OTE long pullback setup" : null,
   ].filter(Boolean);
 
   const counterTrendBear = [
@@ -571,7 +571,7 @@ function buildLocalAnalysis({
     ttmSqueeze.firing && ttmSqueeze.momentum < 0 ? "a squeeze firing lower" : null,
     cmf < -0.1 ? "negative CMF distribution" : null,
     heikinAshi.trend === "bearish" && heikinAshi.consecutiveRed >= 3 ? "bearish Heikin Ashi persistence" : null,
-    ote && ote.direction === "SHORT" && (ote.inOTE || ote.approaching) ? "an OTE short retracement setup" : null,
+    ote?.validStructureBreak && ote.direction === "SHORT" && (ote.inOTE || ote.approaching) ? "an OTE short retracement setup" : null,
   ].filter(Boolean);
 
   let suggestion;
@@ -687,9 +687,9 @@ function buildCommentary({ signal, confidence, rsi, volMult, adx, fullBullStack,
   else if (heikinAshi.trend === "bearish" && heikinAshi.consecutiveRed >= 3) parts.push("Heikin Ashi candles show persistent bearish control.");
 
   // OTE
-  if (ote && ote.inOTE) {
+  if (ote?.validStructureBreak && ote.inOTE) {
     parts.push(`OTE entry active — price in the ${ote.retracementPct}% retracement sweet spot.${ote.hasFVG ? " FVG confluence." : ""} High-probability pullback entry.`);
-  } else if (ote && ote.approaching) {
+  } else if (ote?.validStructureBreak && ote.approaching) {
     parts.push("Approaching OTE zone — watch for entry on pullback.");
   }
 

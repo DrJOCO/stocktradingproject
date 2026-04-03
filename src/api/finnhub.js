@@ -77,7 +77,7 @@ export async function fetchCandleData(ticker, timeframe, assetType) {
   }
 
   // Yahoo sometimes has null values — fill forward
-  const closes = [], highs = [], lows = [], opens = [], volumes = [];
+  const closes = [], highs = [], lows = [], opens = [], volumes = [], timestamps = [];
   let lastC = 0, lastH = 0, lastL = 0, lastO = 0;
   for (let i = 0; i < quotes.close.length; i++) {
     const c = quotes.close[i] ?? lastC;
@@ -87,6 +87,7 @@ export async function fetchCandleData(ticker, timeframe, assetType) {
     const v = quotes.volume[i] ?? 0;
     if (c > 0) { // skip zero/null rows
       closes.push(c); highs.push(h); lows.push(l); opens.push(o); volumes.push(v);
+      timestamps.push(result.timestamp?.[i] ? new Date(result.timestamp[i] * 1000).toISOString() : null);
       lastC = c; lastH = h; lastL = l; lastO = o;
     }
   }
@@ -95,7 +96,7 @@ export async function fetchCandleData(ticker, timeframe, assetType) {
 
   const livePrice = result.meta?.regularMarketPrice || closes[closes.length - 1];
 
-  const data = { closes, highs, lows, opens, volumes, livePrice };
+  const data = { closes, highs, lows, opens, volumes, timestamps, livePrice };
   cache.set(cacheKey, { data, ts: Date.now() });
   return data;
 }
@@ -132,7 +133,7 @@ export async function fetchBacktestData(ticker, assetType) {
   const quotes = result.indicators?.quote?.[0];
   if (!quotes?.close) throw new Error(`No candle data for ${ticker}`);
 
-  const closes = [], highs = [], lows = [], opens = [], volumes = [];
+  const closes = [], highs = [], lows = [], opens = [], volumes = [], timestamps = [];
   let lastC = 0, lastH = 0, lastL = 0, lastO = 0;
   for (let i = 0; i < quotes.close.length; i++) {
     const c = quotes.close[i] ?? lastC;
@@ -142,12 +143,13 @@ export async function fetchBacktestData(ticker, assetType) {
     const v = quotes.volume[i] ?? 0;
     if (c > 0) {
       closes.push(c); highs.push(h); lows.push(l); opens.push(o); volumes.push(v);
+      timestamps.push(result.timestamp?.[i] ? new Date(result.timestamp[i] * 1000).toISOString() : null);
       lastC = c; lastH = h; lastL = l; lastO = o;
     }
   }
 
   const livePrice = result.meta?.regularMarketPrice || closes[closes.length - 1];
-  const data = { closes, highs, lows, opens, volumes, livePrice };
+  const data = { closes, highs, lows, opens, volumes, timestamps, livePrice };
   cache.set(cacheKey, { data, ts: Date.now() });
   return data;
 }

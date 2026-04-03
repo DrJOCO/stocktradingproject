@@ -14,7 +14,7 @@ const defaultSignalProps = {
     { label: "Supertrend bullish — price above support", status: "pass" },
     { label: "MACD above signal line", status: "pass" },
     { label: "RSI 62 — bullish zone", status: "pass" },
-    { label: "VWAP above — buyers in control", status: "pass" },
+    { label: "Rolling VWAP above — buyers in control", status: "pass" },
     { label: "Volume 1.8x avg — strong participation", status: "pass" },
   ],
 };

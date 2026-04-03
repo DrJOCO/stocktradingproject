@@ -122,7 +122,7 @@ export const ADAPTIVE_INDICATOR_LABELS = {
   ema21Bias: "EMA21 Bias",
   supertrend: "Supertrend",
   macd: "MACD",
-  aboveVWAP: "VWAP",
+  aboveVWAP: "Rolling VWAP",
   ichimoku: "Ichimoku",
   rsiBias: "RSI Bias",
   stochRsiBias: "Stoch RSI",

@@ -1,39 +1,51 @@
-// Advanced indicators: Supertrend, VWAP, Ichimoku, Fibonacci, Pivots, A/D
+// Advanced indicators: Supertrend, rolling VWAP, Ichimoku, Fibonacci, Pivots, A/D
 
-import { calcATR, calcEMA, calcSMA } from './core.js';
+import { calcATR, calcATRSeries, calcEMA, calcSMA } from './core.js';
 
 export function calcSupertrend(highs, lows, closes, period = 10, multiplier = 3) {
   if (closes.length < period + 1) return { bullish: true, value: closes[closes.length - 1] };
 
-  const atr = calcATR(highs, lows, closes, period);
-  const mid = (highs[highs.length - 1] + lows[lows.length - 1]) / 2;
-  const upperBand = mid + multiplier * atr;
-  const lowerBand = mid - multiplier * atr;
+  const atrSeries = calcATRSeries(highs, lows, closes, period);
+  let prevFinalUpper = 0;
+  let prevFinalLower = 0;
+  let prevSupertrend = closes[closes.length - 1];
+  let initialized = false;
 
-  // Walk through recent bars to determine trend direction
-  let trend = 1; // 1 = bullish, -1 = bearish
-  let prevUpper = upperBand, prevLower = lowerBand;
+  for (let i = period; i < closes.length; i++) {
+    const atr = atrSeries[i];
+    if (typeof atr !== "number") continue;
 
-  const n = Math.min(closes.length, 50);
-  for (let i = closes.length - n; i < closes.length; i++) {
-    const m = (highs[i] + lows[i]) / 2;
-    const ub = m + multiplier * atr;
-    const lb = m - multiplier * atr;
-    const curLower = lb > prevLower ? lb : prevLower;
-    const curUpper = ub < prevUpper ? ub : prevUpper;
+    const mid = (highs[i] + lows[i]) / 2;
+    const basicUpper = mid + multiplier * atr;
+    const basicLower = mid - multiplier * atr;
 
-    if (closes[i] > prevUpper) trend = 1;
-    else if (closes[i] < prevLower) trend = -1;
+    if (!initialized) {
+      prevFinalUpper = basicUpper;
+      prevFinalLower = basicLower;
+      prevSupertrend = closes[i] <= prevFinalUpper ? prevFinalUpper : prevFinalLower;
+      initialized = true;
+      continue;
+    }
 
-    prevUpper = curUpper;
-    prevLower = curLower;
+    const prevClose = closes[i - 1];
+    const finalUpper = basicUpper < prevFinalUpper || prevClose > prevFinalUpper ? basicUpper : prevFinalUpper;
+    const finalLower = basicLower > prevFinalLower || prevClose < prevFinalLower ? basicLower : prevFinalLower;
+
+    if (prevSupertrend === prevFinalUpper) {
+      prevSupertrend = closes[i] <= finalUpper ? finalUpper : finalLower;
+    } else {
+      prevSupertrend = closes[i] >= finalLower ? finalLower : finalUpper;
+    }
+
+    prevFinalUpper = finalUpper;
+    prevFinalLower = finalLower;
   }
 
-  const bullish = trend === 1;
-  return { bullish, value: bullish ? lowerBand : upperBand };
+  const bullish = closes[closes.length - 1] >= prevSupertrend;
+  return { bullish, value: parseFloat(prevSupertrend.toFixed(3)) };
 }
 
-// VWAP — volume-weighted average price (intraday approximation from candles)
+// Rolling VWAP approximation from recent candles, not a session-reset VWAP.
 export function calcVWAP(highs, lows, closes, volumes) {
   if (closes.length < 2) return closes[closes.length - 1];
   const n = Math.min(closes.length, 50);
@@ -284,6 +296,15 @@ export function calcOTE(highs, lows, closes) {
 
   // Determine trend direction: if swing low came before swing high, trend is up (and vice versa)
   const bullishSwing = swingLowIdx < swingHighIdx; // low formed first, then high = uptrend
+  const referenceWindowStart = bullishSwing
+    ? Math.max(0, swingLowIdx - 10)
+    : Math.max(0, swingHighIdx - 10);
+  const structureBreakReference = bullishSwing
+    ? Math.max(...recentH.slice(referenceWindowStart, swingLowIdx + 1))
+    : Math.min(...recentL.slice(referenceWindowStart, swingHighIdx + 1));
+  const validStructureBreak = bullishSwing
+    ? swingHigh > structureBreakReference * 1.002
+    : swingLow < structureBreakReference * 0.998;
 
   // OTE zone: 62-79% retracement of the swing
   let oteTop, oteBottom, direction;
@@ -327,6 +348,11 @@ export function calcOTE(highs, lows, closes) {
     inOTE,
     approaching,
     direction,
+    bullishSwing,
+    validStructureBreak,
+    swingHighIndex: swingHighIdx,
+    swingLowIndex: swingLowIdx,
+    range: parseFloat(range.toFixed(2)),
     oteTop: parseFloat(oteTop.toFixed(2)),
     oteBottom: parseFloat(oteBottom.toFixed(2)),
     swingHigh: parseFloat(swingHigh.toFixed(2)),

@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { C, Card, SecHead, Chip, Spinner } from "./ui.jsx";
-import { getAlerts, addAlert, removeAlert } from "../utils/storage.js";
-import { checkAlerts } from "../utils/alerts.js";
+import { getAlerts, addAlert, removeAlert, subscribeStorage } from "../utils/storage.js";
 
 export function AlertNotifications({ triggered, onDismiss }) {
   if (!triggered.length) return null;
@@ -112,6 +111,12 @@ export function AlertSetButton({ ticker, assetType }) {
 export function AlertsList() {
   const [alerts, setAlerts] = useState(getAlerts());
   const handleRemove = (id) => { const updated = removeAlert(id); setAlerts(updated); };
+
+  useEffect(() => subscribeStorage(({ keys }) => {
+    if (!keys?.length || keys.includes("alerts")) {
+      setAlerts(getAlerts());
+    }
+  }), []);
 
   if (!alerts.length) return null;
   const active = alerts.filter(a => !a.triggered);

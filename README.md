@@ -8,6 +8,7 @@ A React + Vite trading dashboard for scanning symbols, analyzing technical signa
 - Remotion for video exports
 - Yahoo Finance data proxied through the Vite dev server in local development
 - Vercel serverless API routes for production deployments
+- Optional Firebase Auth + Firestore sync for cross-device state
 
 ## Getting Started
 1. Install dependencies:
@@ -41,8 +42,9 @@ npm run dev
 - Screener inputs and the most recent screener results are cached in `localStorage` so they survive tab switches and refreshes.
 
 ## Environment
-- No client environment variables are required right now.
-- If you add a premium data provider later, create a local `.env` or `.env.local` file and only read values through `import.meta.env`.
+- No client environment variables are required for the default market data flow.
+- To enable sign-in and cross-device sync, create a Firebase web app and set the `VITE_FIREBASE_*` variables shown in `.env.example`.
+- Vercel will need the same `VITE_FIREBASE_*` variables added in Project Settings -> Environment Variables before you redeploy.
 - Keep secrets out of git. `.env.example` is the only env file intended to be shared.
 
 ## Project Structure
@@ -66,3 +68,30 @@ The app will use the bundled Vercel API routes under `/api/yahoo/*` for market d
 ## Mobile Notes
 - The main analyzer, signal cards, journal, heatmap, and utility screens now use auto-fitting grids so they stack more cleanly on phones.
 - `index.html` already includes a responsive viewport meta tag, so the app is ready for mobile browser use after deployment.
+
+## Enable Firebase Sync
+1. Create a Firebase project and add a Web app.
+2. Enable:
+   - Authentication -> Google provider
+   - Firestore Database
+3. Add your local dev URL and deployed Vercel URL to Firebase Authentication -> Authorized domains.
+4. Copy the web app config values into `.env.local` using the keys in `.env.example`.
+5. Add the same variables in Vercel and redeploy.
+
+The app will keep working in local-only mode until Firebase is configured. Once you sign in, watchlists, screener state, alerts, journal entries, and account settings will sync through Firestore.
+
+### Firestore Rules
+Use authenticated per-user rules for the sync document:
+
+```txt
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{userId}/state/{docId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+  }
+}
+```
+
+That matches this app’s storage path: `users/{uid}/state/app`.

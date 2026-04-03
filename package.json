@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
+    "test": "node --test",
     "preview": "vite preview",
     "studio": "remotion studio src/video/index.js",
     "render-signal": "remotion render src/video/index.js SignalCard out/signal-card.mp4",
@@ -16,6 +17,7 @@
   "dependencies": {
     "@remotion/cli": "^4.0.440",
     "@remotion/player": "^4.0.440",
+    "firebase": "^12.11.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "remotion": "^4.0.440"

@@ -10,6 +10,67 @@ export const C = {
   raj: "'Rajdhani', sans-serif",
 };
 
+export const UI = {
+  field: { display: "flex", flexDirection: "column", gap: 4 },
+  label: { color: C.dim, fontSize: "0.57rem", letterSpacing: "0.1em", fontFamily: C.mono },
+  control: {
+    background: "#090f09",
+    border: `1px solid ${C.border}`,
+    borderRadius: 6,
+    padding: "8px 10px",
+    color: C.light,
+    fontFamily: C.mono,
+    fontSize: "0.75rem",
+  },
+};
+
+export function inputStyle(overrides = {}) {
+  return { ...UI.control, ...overrides };
+}
+
+export function selectStyle(overrides = {}) {
+  return { ...UI.control, ...overrides };
+}
+
+export function primaryButtonStyle(enabled = true, overrides = {}) {
+  return {
+    background: enabled ? "linear-gradient(135deg,#0d2e18,#0f3820)" : "#0a120a",
+    border: `1px solid ${enabled ? C.green : C.border}`,
+    color: enabled ? C.green : C.dim,
+    borderRadius: 8,
+    padding: "12px 0",
+    fontSize: "0.75rem",
+    letterSpacing: "0.15em",
+    fontWeight: 700,
+    width: "100%",
+    ...overrides,
+  };
+}
+
+export function iconButtonStyle(overrides = {}) {
+  return {
+    background: "transparent",
+    border: "none",
+    color: C.dim,
+    fontSize: "0.9rem",
+    padding: "4px 6px",
+    ...overrides,
+  };
+}
+
+export function accentButtonStyle(color = C.green, overrides = {}) {
+  return {
+    background: color,
+    border: "none",
+    borderRadius: 5,
+    color: "#070d07",
+    fontWeight: 800,
+    fontSize: "1rem",
+    padding: "7px 14px",
+    ...overrides,
+  };
+}
+
 export function GlobalStyles() {
   return (
     <style>{`
