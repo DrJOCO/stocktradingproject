@@ -177,14 +177,16 @@ function buildSummaryPost(results, sourceLabel, timeframe, confirmTimeframe) {
   const longCount = results.filter((item) => item.signal.includes("LONG")).length;
   const shortCount = results.filter((item) => item.signal.includes("SHORT")).length;
   const neutralCount = results.filter((item) => item.signal === "NEUTRAL").length;
-  const topText = top.map((item, index) => `${index + 1}) ${item.ticker} ${shortSignal(item.signal)} S${item.score}`).join(" | ");
+  const topText = top.length
+    ? top.map((item, index) => `${index + 1}) ${item.ticker} ${shortSignal(item.signal)} S${item.score}`).join(" | ")
+    : "no clean setups cleared the screen";
   return clampPost(
     `Morning screener ${sourceLabel} ${timeframe}${confirmTimeframe ? `/${confirmTimeframe}` : ""}: ${topText}. Breadth: ${longCount} long / ${shortCount} short / ${neutralCount} neutral. Watching confirmation, not chasing. #stocks #trading`,
   );
 }
 
 function buildThreadStarter(results, timeframe) {
-  const top = results.slice(0, 3).map((item) => `${item.ticker} ${shortSignal(item.signal)} S${item.score}/C${item.confidence}%`).join(" • ");
+  const top = results.slice(0, 3).map((item) => `${item.ticker} ${shortSignal(item.signal)} S${item.score}/C${item.confidence}%`).join(" • ") || "none qualified today";
   return clampPost(`Top 3 ${timeframe} setups from this morning’s screen: ${top}. Quick trade-plan notes below. #stocks #swingtrading`);
 }
 
@@ -197,6 +199,14 @@ function buildReply(card, index) {
 
 function printSection(title) {
   console.log(`\n## ${title}`);
+}
+
+function printFailures(failures) {
+  if (!failures.length) return;
+  printSection("Fetch Failures");
+  failures.forEach((card, index) => {
+    console.log(`${index + 1}. ${card.ticker} | ${card.error}`);
+  });
 }
 
 function printUsage() {
@@ -260,19 +270,32 @@ async function main() {
     if (index < tickers.length - 1) await sleep(SLEEP_MS);
   }
 
-  const ranked = rankResults(cards.filter((card) => !card.error), sortBy).slice(0, DEFAULT_LIMIT);
+  const failures = cards.filter((card) => card.error);
+  const successfulCards = cards.filter((card) => card.raw && !card.error);
+  if (!successfulCards.length) {
+    const examples = failures.slice(0, 3).map((card) => `${card.ticker}: ${card.error}`).join(" | ");
+    throw new Error(`All ticker fetches failed. ${examples || "Check network access and Yahoo availability."}`);
+  }
+
+  const ranked = rankResults(successfulCards, sortBy).slice(0, DEFAULT_LIMIT);
   const topThree = ranked.slice(0, DEFAULT_TOP_COUNT);
 
   console.log(`# Morning Brief`);
   console.log(`Source: ${label}`);
   console.log(`Universe: ${tickers.join(", ")}`);
   console.log(`Timeframe: ${timeframe}${confirmTimeframe ? ` with ${confirmTimeframe} confirmation` : ""}`);
-  console.log(`Scanned: ${cards.length} | Ranked: ${ranked.length}`);
+  console.log(`Scanned: ${cards.length} | Ranked: ${ranked.length} | Failed: ${failures.length}`);
+
+  printFailures(failures);
 
   printSection("Top Results");
   ranked.forEach((card, index) => {
     console.log(`${index + 1}. ${card.ticker} | ${card.signal} | Score ${card.score} | Conf ${card.confidence}% | Entry $${card.entry} | ${card.mtf?.status || "OFF"}`);
   });
+
+  if (!ranked.length) {
+    console.log("No clean setups made it through ranking. Try a broader universe, different timeframe, or confirmation mode OFF.");
+  }
 
   printSection("X Draft 1 — Screener Summary");
   const summaryPost = buildSummaryPost(ranked, label, timeframe, confirmTimeframe);

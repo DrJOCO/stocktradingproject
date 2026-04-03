@@ -18,6 +18,11 @@ const CRYPTO_YAHOO = {
   MATIC: "MATIC-USD", UNI: "UNI-USD",
 };
 
+const YAHOO_UPSTREAM_HEADERS = {
+  "User-Agent": "Mozilla/5.0 (compatible; SignalAnalyzer/1.0; +https://vercel.com)",
+  Accept: "application/json,text/plain,*/*",
+};
+
 function resolveYahooSymbol(ticker, assetType) {
   const sym = ticker.toUpperCase();
   if (assetType === "Crypto") {
@@ -58,6 +63,12 @@ function buildQuoteSummaryUrl(symbol, modules) {
   return `/api/yahoo/quote-summary?${search.toString()}`;
 }
 
+function fetchYahoo(url) {
+  const isBrowser = typeof window !== "undefined";
+  if (isBrowser) return fetch(url);
+  return fetch(url, { headers: YAHOO_UPSTREAM_HEADERS });
+}
+
 // Simple in-memory cache
 const cache = new Map();
 const CACHE_TTL = 60_000;
@@ -74,7 +85,7 @@ export async function fetchCandleData(ticker, timeframe, assetType) {
   }
 
   const url = buildChartUrl(symbol, { range, interval, includePrePost: "false" });
-  const res = await fetch(url);
+  const res = await fetchYahoo(url);
 
   if (res.status === 429) throw new Error("Rate limited — wait a moment and try again.");
   if (!res.ok) throw new Error(`Yahoo Finance error: ${res.status}`);
@@ -137,7 +148,7 @@ export async function fetchBacktestData(ticker, assetType) {
   if (cached && Date.now() - cached.ts < CACHE_TTL * 5) return cached.data;
 
   const url = buildChartUrl(symbol, { range: "5y", interval: "1d", includePrePost: "false" });
-  const res = await fetch(url);
+  const res = await fetchYahoo(url);
   if (!res.ok) throw new Error(`Yahoo Finance error: ${res.status}`);
   const json = await res.json();
   const result = json?.chart?.result?.[0];
@@ -182,7 +193,7 @@ export async function fetchEarnings(ticker, assetType) {
       includePrePost: "false",
       events: "earnings",
     });
-    const res = await fetch(url);
+    const res = await fetchYahoo(url);
     if (!res.ok) return null;
     const json = await res.json();
     const result = json?.chart?.result?.[0];
@@ -193,7 +204,7 @@ export async function fetchEarnings(ticker, assetType) {
     let nextEarningsEst = null;
     try {
       const qUrl = buildQuoteSummaryUrl(symbol, "calendarEvents,earnings");
-      const qRes = await fetch(qUrl);
+      const qRes = await fetchYahoo(qUrl);
       if (qRes.ok) {
         const qJson = await qRes.json();
         const cal = qJson?.quoteSummary?.result?.[0]?.calendarEvents;
