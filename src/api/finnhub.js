@@ -23,6 +23,11 @@ const YAHOO_UPSTREAM_HEADERS = {
   Accept: "application/json,text/plain,*/*",
 };
 
+const NODE_ENV_VARS = typeof globalThis !== "undefined" && globalThis.process ? globalThis.process.env : {};
+const NODE_PROXY_BASE_URL = NODE_ENV_VARS.MORNING_PROXY_BASE_URL
+  || NODE_ENV_VARS.SIGNAL_ANALYZER_BASE_URL
+  || "https://stocktradingproject.vercel.app";
+
 function resolveYahooSymbol(ticker, assetType) {
   const sym = ticker.toUpperCase();
   if (assetType === "Crypto") {
@@ -47,6 +52,12 @@ function buildChartUrl(symbol, params) {
   return `/api/yahoo/chart?${search.toString()}`;
 }
 
+function buildNodeProxyChartUrl(symbol, params) {
+  const search = new URLSearchParams(params);
+  search.set("symbol", symbol);
+  return `${NODE_PROXY_BASE_URL.replace(/\/$/, "")}/api/yahoo/chart?${search.toString()}`;
+}
+
 function buildQuoteSummaryUrl(symbol, modules) {
   const search = new URLSearchParams({ modules });
   const isBrowser = typeof window !== "undefined";
@@ -63,10 +74,27 @@ function buildQuoteSummaryUrl(symbol, modules) {
   return `/api/yahoo/quote-summary?${search.toString()}`;
 }
 
+function buildNodeProxyQuoteSummaryUrl(symbol, modules) {
+  const search = new URLSearchParams({ modules, symbol });
+  return `${NODE_PROXY_BASE_URL.replace(/\/$/, "")}/api/yahoo/quote-summary?${search.toString()}`;
+}
+
 function fetchYahoo(url) {
   const isBrowser = typeof window !== "undefined";
   if (isBrowser) return fetch(url);
   return fetch(url, { headers: YAHOO_UPSTREAM_HEADERS });
+}
+
+async function fetchYahooWithFallback(primaryUrl, fallbackUrl = null) {
+  try {
+    const response = await fetchYahoo(primaryUrl);
+    if (response.ok || !fallbackUrl || typeof window !== "undefined") return response;
+    if (response.status < 500 && response.status !== 429) return response;
+  } catch (error) {
+    if (!fallbackUrl || typeof window !== "undefined") throw error;
+  }
+
+  return fetchYahoo(fallbackUrl);
 }
 
 // Simple in-memory cache
@@ -85,7 +113,10 @@ export async function fetchCandleData(ticker, timeframe, assetType) {
   }
 
   const url = buildChartUrl(symbol, { range, interval, includePrePost: "false" });
-  const res = await fetchYahoo(url);
+  const fallbackUrl = typeof window === "undefined"
+    ? buildNodeProxyChartUrl(symbol, { range, interval, includePrePost: "false" })
+    : null;
+  const res = await fetchYahooWithFallback(url, fallbackUrl);
 
   if (res.status === 429) throw new Error("Rate limited — wait a moment and try again.");
   if (!res.ok) throw new Error(`Yahoo Finance error: ${res.status}`);
@@ -148,7 +179,10 @@ export async function fetchBacktestData(ticker, assetType) {
   if (cached && Date.now() - cached.ts < CACHE_TTL * 5) return cached.data;
 
   const url = buildChartUrl(symbol, { range: "5y", interval: "1d", includePrePost: "false" });
-  const res = await fetchYahoo(url);
+  const fallbackUrl = typeof window === "undefined"
+    ? buildNodeProxyChartUrl(symbol, { range: "5y", interval: "1d", includePrePost: "false" })
+    : null;
+  const res = await fetchYahooWithFallback(url, fallbackUrl);
   if (!res.ok) throw new Error(`Yahoo Finance error: ${res.status}`);
   const json = await res.json();
   const result = json?.chart?.result?.[0];
@@ -193,7 +227,15 @@ export async function fetchEarnings(ticker, assetType) {
       includePrePost: "false",
       events: "earnings",
     });
-    const res = await fetchYahoo(url);
+    const fallbackUrl = typeof window === "undefined"
+      ? buildNodeProxyChartUrl(symbol, {
+          range: "3mo",
+          interval: "1d",
+          includePrePost: "false",
+          events: "earnings",
+        })
+      : null;
+    const res = await fetchYahooWithFallback(url, fallbackUrl);
     if (!res.ok) return null;
     const json = await res.json();
     const result = json?.chart?.result?.[0];
@@ -204,7 +246,10 @@ export async function fetchEarnings(ticker, assetType) {
     let nextEarningsEst = null;
     try {
       const qUrl = buildQuoteSummaryUrl(symbol, "calendarEvents,earnings");
-      const qRes = await fetchYahoo(qUrl);
+      const qFallbackUrl = typeof window === "undefined"
+        ? buildNodeProxyQuoteSummaryUrl(symbol, "calendarEvents,earnings")
+        : null;
+      const qRes = await fetchYahooWithFallback(qUrl, qFallbackUrl);
       if (qRes.ok) {
         const qJson = await qRes.json();
         const cal = qJson?.quoteSummary?.result?.[0]?.calendarEvents;
