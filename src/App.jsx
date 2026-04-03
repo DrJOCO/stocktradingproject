@@ -1,15 +1,18 @@
-import { lazy, Suspense, useState, useCallback } from "react";
-import { GlobalStyles, C, ErrorBanner, Spinner } from "./components/ui.jsx";
+import { lazy, Suspense, useState, useCallback, useEffect } from "react";
+import { GlobalStyles, C, ErrorBanner, Spinner, Chip } from "./components/ui.jsx";
 import ErrorBoundary from "./components/ErrorBoundary.jsx";
+import { useAuth } from "./auth/AuthProvider.jsx";
 import AnalyzeScreen from "./components/AnalyzeScreen.jsx";
 import QuickLogButton from "./components/QuickLogButton.jsx";
-import { Commentary, AISummary, SignalHeader, EarlyWarnings, PatternBreakouts, SignalCards, OptionsPlay, BacktestCard, MTFBadge, EarningsCard } from "./components/SignalResult.jsx";
+import { Commentary, AISummary, SignalHeader, EarlyWarnings, PatternBreakouts, SignalCards, OptionsPlay, BacktestCard, MTFBadge, EarningsCard, TickerHistoryCard, OTEReviewCard } from "./components/SignalResult.jsx";
 import { AlertNotifications, AlertSetButton, AlertsList } from "./components/AlertsPanel.jsx";
 import { buildSignalVideoProps } from "./components/videoExportProps.js";
 import { fetchCandleData, fetchBacktestData, fetchEarnings } from "./api/finnhub.js";
 import { buildSignalCard, rescoreWithAdaptiveWeights } from "./indicators/scoring.js";
 import { runBacktest } from "./backtest/engine.js";
+import { getOteReviewTimeframes, reviewOteTriggers } from "./indicators/oteReview.js";
 import { checkAlerts } from "./utils/alerts.js";
+import { addRecentAnalysis, getRecentAnalyses, subscribeStorage } from "./utils/storage.js";
 
 const ScreenerScreen = lazy(() => import("./components/ScreenerScreen.jsx"));
 const PortfolioScreen = lazy(() => import("./components/PortfolioScreen.jsx"));
@@ -42,7 +45,66 @@ function SectionFallback({ label = "LOADING" }) {
   );
 }
 
+function buildRecentAnalysisEntry(card, analysis, assetType) {
+  return {
+    ticker: card.ticker,
+    timeframe: card.timeframe,
+    assetType,
+    signal: card.signal,
+    score: card.score,
+    confidence: card.confidence,
+    entry: card.entry,
+    stop: card.stop,
+    target: card.target,
+    adx: card.adx,
+    vol: card.vol,
+    heroLead: analysis?.heroLead || "",
+    keyStrength: analysis?.keyStrength || "",
+    keyRisk: analysis?.keyRisk || "",
+    summary: analysis?.summary || "",
+    analyzedAt: new Date().toISOString(),
+  };
+}
+
+function buildOteReviewErrorState(timeframe, message) {
+  return {
+    selectedTimeframe: timeframe,
+    timeframes: getOteReviewTimeframes(timeframe),
+    reviewsByTimeframe: {},
+    errorsByTimeframe: timeframe ? { [timeframe]: message || "OTE review unavailable." } : {},
+  };
+}
+
+async function buildOteReviewState(ticker, timeframe, assetType, currentRaw = null) {
+  const timeframes = getOteReviewTimeframes(timeframe);
+  const requests = timeframes.map((frame) =>
+    frame === timeframe && currentRaw
+      ? Promise.resolve(currentRaw)
+      : fetchCandleData(ticker, frame, assetType),
+  );
+  const settled = await Promise.allSettled(requests);
+  const reviewsByTimeframe = {};
+  const errorsByTimeframe = {};
+
+  settled.forEach((result, index) => {
+    const frame = timeframes[index];
+    if (result.status === "fulfilled") {
+      reviewsByTimeframe[frame] = { timeframe: frame, ...reviewOteTriggers(result.value) };
+    } else {
+      errorsByTimeframe[frame] = result.reason?.message || "OTE review unavailable.";
+    }
+  });
+
+  return {
+    selectedTimeframe: reviewsByTimeframe[timeframe] ? timeframe : timeframes[0] || timeframe,
+    timeframes,
+    reviewsByTimeframe,
+    errorsByTimeframe,
+  };
+}
+
 export default function App() {
+  const { user, loading: authLoading, enabled: authEnabled, syncState, error: authError, dismissError, signIn, signOut } = useAuth();
   const [tab, setTab] = useState("analyze");
   const [result, setResult] = useState(null);
   const [analysis, setAnalysis] = useState(null);
@@ -54,14 +116,43 @@ export default function App() {
   const [triggeredAlerts, setTriggeredAlerts] = useState([]);
   const [indicatorReport, setIndicatorReport] = useState(null);
   const [earnings, setEarnings] = useState(null);
+  const [oteReview, setOteReview] = useState(null);
+  const [storageVersion, setStorageVersion] = useState(0);
+  const [recentAnalyses, setRecentAnalyses] = useState(() => getRecentAnalyses());
 
-  const handleResult = useCallback(async (d, ai, at) => {
+  useEffect(() => subscribeStorage(({ origin, keys }) => {
+    if (origin === "cloud" || origin === "hydrate" || origin === "auth") {
+      setStorageVersion((version) => version + 1);
+    }
+    if (origin === "cloud" || origin === "hydrate" || origin === "auth" || keys?.includes("recentAnalyses")) {
+      setRecentAnalyses(getRecentAnalyses());
+    }
+  }), []);
+
+  const setSelectedOteTimeframe = useCallback((timeframe) => {
+    setOteReview((current) => {
+      if (!current?.timeframes?.includes(timeframe)) return current;
+      return { ...current, selectedTimeframe: timeframe };
+    });
+  }, []);
+
+  const handleResult = useCallback(async (d, ai, at, liveRaw = null) => {
     setResult(d);
     setAnalysis(ai);
     setAssetType(at);
     setError(null);
+    let finalCard = d;
+    let finalAnalysis = ai;
+    let reviewRaw = liveRaw;
 
-    // Run backtest on extended 2-year data + learn adaptive weights
+    try {
+      reviewRaw = reviewRaw || await fetchCandleData(d.ticker, d.timeframe, at);
+      setOteReview(await buildOteReviewState(d.ticker, d.timeframe, at, reviewRaw));
+    } catch (reviewError) {
+      setOteReview(buildOteReviewErrorState(d.timeframe, reviewError.message));
+    }
+
+    // Run backtest on extended data + learn adaptive weights
     try {
       const btRaw = await fetchBacktestData(d.ticker, at);
       const bt = runBacktest(btRaw);
@@ -69,11 +160,12 @@ export default function App() {
       setIndicatorReport(bt.indicatorReport);
 
       // Re-score the signal using learned adaptive weights
-      if (bt.adaptiveWeights) {
-        const liveRaw = await fetchCandleData(d.ticker, d.timeframe, at);
-        const rescored = rescoreWithAdaptiveWeights(d, liveRaw, bt.adaptiveWeights);
+      if (bt.adaptiveWeights && reviewRaw) {
+        const rescored = rescoreWithAdaptiveWeights(d, reviewRaw, bt.adaptiveWeights);
         setResult(rescored);
         setAnalysis(rescored.analysis);
+        finalCard = rescored;
+        finalAnalysis = rescored.analysis;
       }
     } catch {
       setBacktestStats(null);
@@ -96,11 +188,13 @@ export default function App() {
       const earn = await fetchEarnings(d.ticker, at);
       setEarnings(earn);
     } catch { setEarnings(null); }
+
+    setRecentAnalyses(addRecentAnalysis(buildRecentAnalysisEntry(finalCard, finalAnalysis, at)));
   }, []);
 
   const reset = () => {
     setResult(null); setAnalysis(null); setError(null);
-    setBacktestStats(null); setWeeklySignal(null); setIndicatorReport(null); setEarnings(null);
+    setBacktestStats(null); setWeeklySignal(null); setIndicatorReport(null); setEarnings(null); setOteReview(null);
   };
 
   const handleScreenerSelect = (card) => {
@@ -118,6 +212,9 @@ export default function App() {
       const newCard = buildSignalCard(result.ticker, result.timeframe, raw);
       setResult(newCard);
       setAnalysis(newCard.analysis);
+      setOteReview(await buildOteReviewState(result.ticker, result.timeframe, assetType, raw));
+      let finalCard = newCard;
+      let finalAnalysis = newCard.analysis;
 
       // Backtest on extended data + adaptive re-score
       try {
@@ -130,6 +227,8 @@ export default function App() {
           const rescored = rescoreWithAdaptiveWeights(newCard, raw, bt.adaptiveWeights);
           setResult(rescored);
           setAnalysis(rescored.analysis);
+          finalCard = rescored;
+          finalAnalysis = rescored.analysis;
         }
       } catch {
         setBacktestStats(null);
@@ -157,6 +256,8 @@ export default function App() {
       // Check alerts on refresh
       const alerts = await checkAlerts();
       if (alerts.length) setTriggeredAlerts(prev => [...prev, ...alerts]);
+
+      setRecentAnalyses(addRecentAnalysis(buildRecentAnalysisEntry(finalCard, finalAnalysis, assetType)));
     } catch (e) {
       setError(e.message || "Refresh failed");
     } finally {
@@ -183,6 +284,63 @@ export default function App() {
         {/* Alert notifications */}
         <AlertNotifications triggered={triggeredAlerts}
           onDismiss={(i) => setTriggeredAlerts(prev => prev.filter((_, j) => j !== i))} />
+
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+            <Chip
+              label={authEnabled ? syncState : "LOCAL ONLY"}
+              color={authEnabled ? (user ? C.cyan : C.yellow) : C.dim}
+              bg={authEnabled ? "#051414" : "#101610"}
+              bd={authEnabled ? `${C.cyan}35` : C.border}
+            />
+            {user && (
+              <span style={{ color: C.mid, fontSize: "0.58rem", fontFamily: C.mono }}>
+                {user.displayName || user.email}
+              </span>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {authEnabled ? (
+              user ? (
+                <button
+                  onClick={signOut}
+                  style={{
+                    background: "transparent",
+                    border: `1px solid ${C.border}`,
+                    color: C.dim,
+                    borderRadius: 20,
+                    padding: "5px 12px",
+                    fontSize: "0.58rem",
+                    letterSpacing: "0.1em",
+                  }}
+                >
+                  SIGN OUT
+                </button>
+              ) : (
+                <button
+                  onClick={signIn}
+                  disabled={authLoading}
+                  style={{
+                    background: "#0d2a18",
+                    border: `1px solid ${C.green}`,
+                    color: C.green,
+                    borderRadius: 20,
+                    padding: "5px 12px",
+                    fontSize: "0.58rem",
+                    letterSpacing: "0.1em",
+                    fontWeight: 700,
+                  }}
+                >
+                  {authLoading ? "CONNECTING" : "SIGN IN TO SYNC"}
+                </button>
+              )
+            ) : (
+              <span style={{ color: C.dim, fontSize: "0.56rem", fontFamily: C.mono }}>
+                Add Firebase env vars to enable cross-device sync
+              </span>
+            )}
+          </div>
+        </div>
 
         {/* Top nav */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 10, flexWrap: "wrap" }}>
@@ -221,38 +379,41 @@ export default function App() {
 
       <div className="app-container" style={{ width: "100%", maxWidth: 560 }}>
         <ErrorBanner message={error} onDismiss={() => setError(null)} />
+        <ErrorBanner message={authError} onDismiss={dismissError} />
 
         <ErrorBoundary resetKey={`${tab}:${result?.ticker || "none"}`} onReset={reset}>
           <Suspense fallback={<SectionFallback label="LOADING SCREEN" />}>
-          {tab === "analyze" && !result && <AnalyzeScreen onResult={handleResult} onError={setError} />}
-          {tab === "screener" && !result && <ScreenerScreen onSelectTicker={handleScreenerSelect} />}
+          {tab === "analyze" && !result && <AnalyzeScreen onResult={handleResult} onError={setError} recentAnalyses={recentAnalyses} />}
+          {tab === "screener" && !result && <ScreenerScreen key={`screener:${storageVersion}`} onSelectTicker={handleScreenerSelect} />}
           {tab === "portfolio" && !result && <PortfolioScreen />}
-          {tab === "journal" && !result && <JournalScreen />}
+          {tab === "journal" && !result && <JournalScreen key={`journal:${storageVersion}`} />}
           </Suspense>
 
           {result && (
             <div className="fade">
+              <TickerHistoryCard entries={recentAnalyses.filter((entry) => entry.ticker === result.ticker).slice(0, 6)} />
               <MTFBadge dailySignal={result.signal} weeklySignal={weeklySignal} />
               <Commentary analysis={analysis} signal={result.signal} />
               <AISummary analysis={analysis} signal={result.signal} />
               <BacktestCard stats={backtestStats} signal={result.signal} indicatorReport={indicatorReport} />
+              <OTEReviewCard reviewState={oteReview} onSelectTimeframe={setSelectedOteTimeframe} />
               <SignalHeader d={result} analysis={analysis} />
               <EarlyWarnings warnings={result.earlyWarnings || []} />
               <PatternBreakouts patterns={result.patterns || []} />
               <SignalCards d={result} />
               <Suspense fallback={<SectionFallback label="LOADING SIZER" />}>
-                <PositionSizer d={result} />
+                <PositionSizer key={`position:${storageVersion}`} d={result} />
               </Suspense>
               <OptionsPlay d={result} />
               <EarningsCard earnings={earnings} />
               <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
-                <AlertSetButton ticker={result.ticker} assetType={assetType} />
+                <AlertSetButton key={`alert-set:${result.ticker}:${storageVersion}`} ticker={result.ticker} assetType={assetType} />
                 <QuickLogButton d={result} onLogged={() => {}} />
                 <Suspense fallback={<SectionFallback label="LOADING VIDEO" />}>
                   <VideoExportButton type="signal" props={buildSignalVideoProps(result, analysis)} label="VIDEO" />
                 </Suspense>
               </div>
-              <AlertsList />
+              <AlertsList key={`alerts:${storageVersion}`} />
               <div style={{ textAlign: "center", color: "#182818", fontSize: "0.52rem", letterSpacing: "0.1em", fontFamily: C.mono, padding: "4px 0 20px" }}>
                 FOR INFORMATIONAL PURPOSES ONLY - NOT FINANCIAL ADVICE
               </div>

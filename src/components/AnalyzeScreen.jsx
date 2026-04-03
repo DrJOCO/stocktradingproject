@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { C, Card, Spinner } from "./ui.jsx";
+import { C, Card, Spinner, Chip, UI, selectStyle, primaryButtonStyle, iconButtonStyle } from "./ui.jsx";
 import { fetchCandleData } from "../api/finnhub.js";
 import { buildSignalCard } from "../indicators/scoring.js";
 
@@ -11,11 +11,11 @@ const POPULAR = [
 ];
 
 const STEPS = [
-  "Connecting to market data", "Fetching candle data", "Calculating MAs + VWAP",
+  "Connecting to market data", "Fetching candle data", "Calculating MAs + rVWAP",
   "Computing RSI, MACD, Supertrend", "Scanning Ichimoku + Fib levels", "Building signal card",
 ];
 
-export default function AnalyzeScreen({ onResult, onError }) {
+export default function AnalyzeScreen({ onResult, onError, recentAnalyses = [] }) {
   const [ticker, setTicker] = useState("");
   const [tf, setTf] = useState("1D");
   const [assetType, setAssetType] = useState("US Stock");
@@ -29,24 +29,32 @@ export default function AnalyzeScreen({ onResult, onError }) {
     return () => clearInterval(id);
   }, [loading]);
 
-  const analyze = async () => {
-    if (!ticker.trim() || loading) return;
+  const runAnalysis = async (symbol = ticker.trim(), timeframe = tf, asset = assetType) => {
+    if (!symbol.trim() || loading) return;
+    const normalizedTicker = symbol.trim().toUpperCase();
     setLoading(true); setStep(0);
+    setTicker(normalizedTicker);
+    setTf(timeframe);
+    setAssetType(asset);
     try {
       // imports are at top of file
 
       for (let i = 0; i < 4; i++) { setStep(i); await new Promise(r => setTimeout(r, 250)); }
-      const raw = await fetchCandleData(ticker.trim(), tf, assetType);
+      const raw = await fetchCandleData(normalizedTicker, timeframe, asset);
       setStep(4);
-      const signal = buildSignalCard(ticker.trim(), tf, raw);
+      const signal = buildSignalCard(normalizedTicker, timeframe, raw);
       setStep(5);
       await new Promise(r => setTimeout(r, 150));
-      onResult(signal, signal.analysis, assetType);
+      onResult(signal, signal.analysis, asset, raw);
     } catch (e) {
       onError(e.message || "Failed to fetch data.");
     } finally {
       setLoading(false); setStep(0); setDots("");
     }
+  };
+
+  const analyze = async () => {
+    await runAnalysis(ticker.trim(), tf, assetType);
   };
 
   return (
@@ -67,7 +75,7 @@ export default function AnalyzeScreen({ onResult, onError }) {
             onKeyDown={e => e.key === "Enter" && analyze()} placeholder="ENTER TICKER" maxLength={12} disabled={loading}
             style={{ flex: 1, background: "transparent", border: "none", color: C.light, fontFamily: C.raj, fontSize: "1.4rem", fontWeight: 700, letterSpacing: "0.08em" }} />
           {ticker && !loading && (
-            <button onClick={() => setTicker("")} style={{ background: "transparent", border: "none", color: C.dim, fontSize: "0.9rem", padding: "4px 6px" }}>x</button>
+            <button onClick={() => setTicker("")} style={iconButtonStyle()}>x</button>
           )}
         </div>
 
@@ -77,10 +85,10 @@ export default function AnalyzeScreen({ onResult, onError }) {
             { label: "ASSET TYPE", val: assetType, set: setAssetType, opts: ["US Stock", "Crypto", "ETF"] },
             { label: "TIMEFRAME", val: tf, set: setTf, opts: ["1m","5m","15m","30m","1H","4H","1D","1W"] },
           ].map(s => (
-            <div key={s.label} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <label style={{ color: C.dim, fontSize: "0.57rem", letterSpacing: "0.1em", fontFamily: C.mono }}>{s.label}</label>
+            <div key={s.label} style={UI.field}>
+              <label style={UI.label}>{s.label}</label>
               <select value={s.val} onChange={e => s.set(e.target.value)} disabled={loading}
-                style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 10px", color: C.light, fontFamily: C.mono, fontSize: "0.75rem" }}>
+                style={selectStyle({ background: C.card })}>
                 {s.opts.map(o => <option key={o}>{o}</option>)}
               </select>
             </div>
@@ -88,12 +96,7 @@ export default function AnalyzeScreen({ onResult, onError }) {
         </div>
 
         {/* Analyze button */}
-        <button onClick={analyze} disabled={loading || !ticker.trim()} style={{
-          background: loading || !ticker.trim() ? "#0a120a" : "linear-gradient(135deg,#0d2e18,#0f3820)",
-          border: `1px solid ${loading || !ticker.trim() ? C.border : C.green}`,
-          color: loading || !ticker.trim() ? C.dim : C.green,
-          borderRadius: 8, padding: "14px 0", fontSize: "0.8rem", letterSpacing: "0.15em", fontWeight: 700, width: "100%",
-        }}>
+        <button onClick={analyze} disabled={loading || !ticker.trim()} style={primaryButtonStyle(!loading && !!ticker.trim(), { padding: "14px 0", fontSize: "0.8rem" })}>
           {loading
             ? <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
                 <Spinner />{STEPS[step]}{dots}
@@ -134,9 +137,51 @@ export default function AnalyzeScreen({ onResult, onError }) {
             </div>
             <div style={{ background: "#0c0f0a", border: `1px solid ${C.border}`, borderRadius: 7, padding: "10px 12px" }}>
               <p style={{ color: C.dim, fontSize: "0.58rem", fontFamily: C.mono, lineHeight: 1.65 }}>
-                <span style={{ color: C.green }}>17+ INDICATORS</span> - Supertrend, VWAP, Ichimoku, Stoch RSI, Williams %R, A/D Line, Fibonacci, Pivot Points, MACD, RSI, BB%, OBV, ADX/DMI, RSI divergence, TTM Squeeze, CMF, Heikin Ashi. Live data via Yahoo Finance.
+                <span style={{ color: C.green }}>17+ INDICATORS</span> - Supertrend, rolling VWAP, Ichimoku, Stoch RSI, Williams %R, A/D Line, Fibonacci, Pivot Points, MACD, RSI, BB%, OBV, ADX/DMI, RSI divergence, TTM Squeeze, CMF, Heikin Ashi. Live data via Yahoo Finance.
               </p>
             </div>
+
+            {recentAnalyses.length > 0 && (
+              <Card style={{ padding: 12, marginBottom: 0 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, gap: 8 }}>
+                  <div style={{ color: C.dim, fontSize: "0.56rem", letterSpacing: "0.12em", fontFamily: C.mono }}>RECENT ANALYSIS</div>
+                  <span style={{ color: C.dim, fontSize: "0.5rem", fontFamily: C.mono }}>tap to rerun</span>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                  {recentAnalyses.slice(0, 6).map((entry) => (
+                    <button
+                      key={entry.id}
+                      onClick={() => runAnalysis(entry.ticker, entry.timeframe, entry.assetType)}
+                      style={{
+                        background: "#081008",
+                        border: `1px solid ${C.border}`,
+                        borderRadius: 8,
+                        padding: "10px 11px",
+                        textAlign: "left",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: 10,
+                      }}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 5 }}>
+                          <span style={{ color: C.light, fontFamily: C.raj, fontSize: "0.92rem", fontWeight: 700 }}>{entry.ticker}</span>
+                          <span style={{ color: C.dim, fontSize: "0.53rem", fontFamily: C.mono }}>{entry.timeframe} · {entry.assetType}</span>
+                        </div>
+                        <div style={{ color: C.mid, fontSize: "0.56rem", fontFamily: C.mono, lineHeight: 1.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>
+                          {entry.heroLead || entry.keyStrength || entry.summary || "Recent analysis snapshot"}
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+                        <Chip label={entry.signal} color={entry.signal?.includes("LONG") ? C.green : entry.signal?.includes("SHORT") ? C.red : C.yellow} />
+                        <span style={{ color: C.dim, fontSize: "0.5rem", fontFamily: C.mono }}>S{entry.score} · {entry.confidence}%</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </Card>
+            )}
           </>
         )}
       </div>

@@ -28,7 +28,7 @@ export function Commentary({ analysis, signal }) {
   );
 }
 
-// --- AI Summary ---
+// --- Signal Summary ---
 export function AISummary({ analysis, signal }) {
   if (!analysis) return null;
   const meta = SIGNALS[signal] || SIGNALS["NEUTRAL"];
@@ -37,7 +37,7 @@ export function AISummary({ analysis, signal }) {
   return (
     <Card style={{ border: `1px solid ${meta.color}30`, background: "#0c150c" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-        <span style={{ color: C.cyan, fontSize: "0.6rem", letterSpacing: "0.12em", fontFamily: C.mono }}>ANALYSIS</span>
+        <span style={{ color: C.cyan, fontSize: "0.6rem", letterSpacing: "0.12em", fontFamily: C.mono }}>SIGNAL SUMMARY</span>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
           {analysis.ivEnvironment && (
             <Chip label={`IV ${analysis.ivEnvironment}`}
@@ -202,6 +202,372 @@ export function MTFBadge({ dailySignal, weeklySignal }) {
   );
 }
 
+export function TickerHistoryCard({ entries = [] }) {
+  if (!entries.length) return null;
+
+  const latest = entries[0];
+  const previous = entries[1] || null;
+  const scoreDelta = previous ? latest.score - previous.score : null;
+  const confidenceDelta = previous ? latest.confidence - previous.confidence : null;
+  const signalFlip = previous && latest.signal !== previous.signal;
+
+  return (
+    <Card>
+      <SecHead left="RECENT TICKER HISTORY" right={`${entries.length} SNAPSHOTS`} />
+      {(scoreDelta !== null || confidenceDelta !== null || signalFlip) && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+          {scoreDelta !== null && (
+            <Chip
+              label={`SCORE ${scoreDelta >= 0 ? "+" : ""}${scoreDelta}`}
+              color={scoreDelta >= 0 ? C.green : C.red}
+              bg={scoreDelta >= 0 ? "#0b2214" : "#1a0808"}
+              bd={`${scoreDelta >= 0 ? C.green : C.red}40`}
+            />
+          )}
+          {confidenceDelta !== null && (
+            <Chip
+              label={`CONF ${confidenceDelta >= 0 ? "+" : ""}${confidenceDelta}`}
+              color={confidenceDelta >= 0 ? C.green : C.red}
+              bg={confidenceDelta >= 0 ? "#0b2214" : "#1a0808"}
+              bd={`${confidenceDelta >= 0 ? C.green : C.red}40`}
+            />
+          )}
+          {signalFlip && <Chip label="SIGNAL FLIP" color={C.yellow} bg="#191400" bd="#504400" />}
+        </div>
+      )}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {entries.slice(0, 5).map((entry) => {
+          const meta = SIGNALS[entry.signal] || SIGNALS.NEUTRAL;
+          return (
+            <div key={entry.id} style={{ background: "#081008", border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 12px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <span style={{ color: C.light, fontSize: "0.7rem", fontWeight: 700, fontFamily: C.raj }}>{entry.timeframe}</span>
+                  <Chip label={entry.signal} color={meta.color} bg={meta.color + "18"} bd={meta.color + "40"} />
+                </div>
+                <span style={{ color: C.dim, fontSize: "0.54rem", fontFamily: C.mono }}>
+                  {new Date(entry.analyzedAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                </span>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 6, marginBottom: 6 }}>
+                <div style={{ color: C.dim, fontSize: "0.53rem", fontFamily: C.mono }}>Score <span style={{ color: C.light }}>{entry.score}</span></div>
+                <div style={{ color: C.dim, fontSize: "0.53rem", fontFamily: C.mono }}>Conf <span style={{ color: C.light }}>{entry.confidence}%</span></div>
+                <div style={{ color: C.dim, fontSize: "0.53rem", fontFamily: C.mono }}>Entry <span style={{ color: C.light }}>${entry.entry}</span></div>
+              </div>
+              <div style={{ color: C.mid, fontSize: "0.58rem", fontFamily: C.mono, lineHeight: 1.55 }}>
+                {entry.heroLead || entry.keyStrength || entry.summary || "Recent signal snapshot."}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+export function OTEReviewCard({ reviewState, onSelectTimeframe }) {
+  if (!reviewState) return null;
+
+  const formatReviewDate = (value, options) => {
+    if (!value) return "—";
+    return new Date(value).toLocaleDateString([], options);
+  };
+
+  const selectedTimeframe = reviewState.selectedTimeframe || reviewState.timeframes?.[0] || "1D";
+  const activeReview = reviewState.reviewsByTimeframe?.[selectedTimeframe] || null;
+  const activeError = reviewState.errorsByTimeframe?.[selectedTimeframe] || null;
+  const latestTouch = activeReview?.latest;
+  const latest = activeReview?.latestTriggered || latestTouch || null;
+  const aggregate = activeReview?.aggregate;
+  const overview = activeReview?.overview;
+  const replayReviews = (activeReview?.reviews || []).filter((review) => review.entryPrice != null).slice(0, 4);
+  const replayScale = replayReviews.length
+    ? Math.max(
+        1,
+        ...replayReviews.map((review) => Math.max(
+          Math.abs(review.outcome?.maxAdversePct ?? 0),
+          Math.abs(review.outcome?.maxFavorablePct ?? 0),
+          Math.abs(review.bestRuleExit?.pnlPct ?? 0),
+        )),
+      )
+    : 1;
+  const linePct = (value) => `${50 + ((value || 0) / replayScale) * 50}%`;
+  const spanPct = (value) => `${Math.min(50, (Math.abs(value || 0) / replayScale) * 50)}%`;
+  const outcomeColor = latest?.outcome?.targetHit
+    ? C.green
+    : latest?.outcome?.stopHit
+    ? C.red
+    : C.yellow;
+
+  return (
+    <Card>
+      <SecHead left="OTE TRIGGER REVIEW" right={`${selectedTimeframe} · ${latest?.entryDate ? "POST-TRIGGER AUDIT" : latest ? "ZONE RETEST" : "TIMEFRAME REVIEW"}`} />
+
+      {reviewState.timeframes?.length > 1 && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+          {reviewState.timeframes.map((timeframe) => {
+            const timeframeReview = reviewState.reviewsByTimeframe?.[timeframe];
+            const timeframeError = reviewState.errorsByTimeframe?.[timeframe];
+            const active = timeframe === selectedTimeframe;
+            return (
+              <button
+                key={timeframe}
+                onClick={() => onSelectTimeframe?.(timeframe)}
+                style={{
+                  background: active ? "#0d2a18" : "#081008",
+                  border: `1px solid ${active ? C.green : C.border}`,
+                  borderRadius: 7,
+                  padding: "8px 10px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  color: active ? C.green : C.mid,
+                  minHeight: 0,
+                }}
+              >
+                <span style={{ fontSize: "0.62rem", fontFamily: C.mono, fontWeight: 700 }}>{timeframe}</span>
+                <span style={{ color: active ? C.light : C.dim, fontSize: "0.5rem", fontFamily: C.mono }}>
+                  {timeframeError
+                    ? "unavailable"
+                    : timeframeReview?.overview
+                    ? `${timeframeReview.overview.triggerRate}% trig`
+                    : "no reviews"}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {!latest && (
+        <div style={{ background: "#081008", border: `1px solid ${C.border}`, borderRadius: 8, padding: "12px 14px" }}>
+          <div style={{ color: activeError ? C.red : C.yellow, fontSize: "0.6rem", fontWeight: 700, letterSpacing: "0.08em", fontFamily: C.mono, marginBottom: 5 }}>
+            {activeError ? "REVIEW UNAVAILABLE" : "NO VALID OTE REVIEWS FOUND"}
+          </div>
+          <div style={{ color: C.mid, fontSize: "0.6rem", fontFamily: C.mono, lineHeight: 1.6 }}>
+            {activeError || `No valid structure-break retest into OTE was detected in the loaded ${selectedTimeframe} history.`}
+          </div>
+        </div>
+      )}
+
+      {latest && (
+        <>
+          {overview && (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+              <Chip label={`TOUCHES ${overview.zoneTouches}`} color={C.cyan} bg="#051414" bd={`${C.cyan}35`} />
+              <Chip label={`TRIGGERS ${overview.triggeredEntries}`} color={C.green} bg="#0b2214" bd={`${C.green}40`} />
+              <Chip label={`TRIGGER RATE ${overview.triggerRate}%`} color={overview.triggerRate >= 50 ? C.green : C.yellow} bg="#101610" bd={C.border} />
+              <Chip label={`TARGET ${overview.targetRate}%`} color={C.green} bg="#0b2214" bd={`${C.green}40`} />
+              <Chip label={`FAIL ${overview.failureRate}%`} color={C.red} bg="#1a0808" bd={`${C.red}40`} />
+            </div>
+          )}
+          <div style={{ background: "#081008", border: `1px solid ${outcomeColor}25`, borderRadius: 8, padding: "12px 14px", marginBottom: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 7 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <Chip label={`${latest.direction} OTE`} color={latest.direction === "LONG" ? C.green : C.red} />
+                {latest.entryDate ? (
+                  <Chip label="ENTRY TRIGGERED" color={outcomeColor} bg={outcomeColor + "18"} bd={outcomeColor + "40"} />
+                ) : (
+                  <Chip label="ZONE TOUCHED / NO TRIGGER" color={C.yellow} bg="#191400" bd="#504400" />
+                )}
+                {latest.triggerQuality ? (
+                  <Chip label={`QUALITY ${latest.triggerQuality}`} color={latest.triggerQuality >= 70 ? C.green : latest.triggerQuality >= 55 ? C.yellow : C.red} bg="#101610" bd={C.border} />
+                ) : null}
+              </div>
+              <span style={{ color: C.dim, fontSize: "0.55rem", fontFamily: C.mono }}>
+                {formatReviewDate(latest.entryDate || latest.zoneDate, { month: "short", day: "numeric", year: "numeric" })}
+              </span>
+            </div>
+            <p style={{ color: C.light, fontSize: "0.62rem", fontFamily: C.mono, lineHeight: 1.65, margin: 0 }}>
+              {latest.narrative}
+            </p>
+            {latest.triggerConfirmationCount > 0 && (
+              <div style={{ marginTop: 8 }}>
+                <div style={{ color: C.dim, fontSize: "0.52rem", letterSpacing: "0.1em", fontFamily: C.mono, marginBottom: 5 }}>TRIGGER STACK</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 5 }}>
+                  <Chip label={latest.triggerCandle || "Confirmation candle"} color={C.yellow} bg="#191400" bd="#504400" />
+                  <Chip label={`${latest.triggerConfirmationCount} SUPPORTING SIGNALS`} color={C.cyan} bg="#051414" bd={`${C.cyan}35`} />
+                </div>
+                <div style={{ color: C.mid, fontSize: "0.57rem", fontFamily: C.mono, lineHeight: 1.55 }}>
+                  {latest.triggerConfirmations.join(" • ")}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {latestTouch && latestTouch.id !== latest.id && latestTouch.entryPrice == null && (
+            <div style={{ background: "#141100", border: `1px solid ${C.yellow}25`, borderRadius: 8, padding: "10px 12px", marginBottom: 10 }}>
+              <div style={{ color: C.yellow, fontSize: "0.58rem", fontWeight: 700, letterSpacing: "0.08em", fontFamily: C.mono, marginBottom: 4 }}>LATEST TOUCH DID NOT CONFIRM</div>
+              <div style={{ color: C.mid, fontSize: "0.58rem", fontFamily: C.mono, lineHeight: 1.55 }}>
+                {latestTouch.narrative}
+              </div>
+            </div>
+          )}
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(115px, 1fr))", gap: 8, marginBottom: 10 }}>
+            <MetricBox label="ZONE" value={`$${latest.oteBottom}-$${latest.oteTop}`} color={C.light} big />
+            <MetricBox label="ENTRY" value={latest.entryPrice != null ? `$${latest.entryPrice}` : "—"} color={C.light} big />
+            <MetricBox label="STOP" value={latest.stop != null ? `$${latest.stop}` : "—"} color={C.red} big />
+            <MetricBox label="TARGET" value={latest.target != null ? `$${latest.target}` : "—"} color={C.green} big />
+          </div>
+
+          {latest.outcome && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8, marginBottom: 10 }}>
+              <MetricBox label="MAX RUN" value={`${latest.outcome.maxFavorablePct >= 0 ? "+" : ""}${latest.outcome.maxFavorablePct}%`} color={C.green} />
+              <MetricBox label="MAX HEAT" value={`-${Math.abs(latest.outcome.maxAdversePct).toFixed(2)}%`} color={C.red} />
+              <MetricBox label="20-BAR CLOSE" value={`${latest.outcome.closeReturnPct >= 0 ? "+" : ""}${latest.outcome.closeReturnPct}%`} color={latest.outcome.closeReturnPct >= 0 ? C.green : C.red} />
+              <MetricBox label="BARS" value={latest.outcome.barsObserved} color={C.mid} />
+            </div>
+          )}
+
+          {latest.bestRuleExit && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginBottom: 10 }}>
+              <div style={{ background: "#091409", border: `1px solid ${C.green}25`, borderRadius: 8, padding: "10px 12px" }}>
+                <div style={{ color: C.dim, fontSize: "0.52rem", letterSpacing: "0.1em", fontFamily: C.mono, marginBottom: 4 }}>BEST RULE-BASED EXIT</div>
+                <div style={{ color: C.green, fontSize: "0.68rem", fontFamily: C.mono, fontWeight: 700, marginBottom: 3 }}>{latest.bestRuleExit.label}</div>
+                <div style={{ color: C.mid, fontSize: "0.58rem", fontFamily: C.mono, lineHeight: 1.55 }}>
+                  Exit {latest.bestRuleExit.barsHeld} bars later at ${latest.bestRuleExit.exitPrice} for {latest.bestRuleExit.pnlPct >= 0 ? "+" : ""}{latest.bestRuleExit.pnlPct}%.
+                </div>
+              </div>
+              {latest.defensiveRuleExit && (
+                <div style={{ background: "#140d00", border: `1px solid ${C.yellow}25`, borderRadius: 8, padding: "10px 12px" }}>
+                  <div style={{ color: C.dim, fontSize: "0.52rem", letterSpacing: "0.1em", fontFamily: C.mono, marginBottom: 4 }}>DEFENSIVE EXIT</div>
+                  <div style={{ color: C.yellow, fontSize: "0.68rem", fontFamily: C.mono, fontWeight: 700, marginBottom: 3 }}>{latest.defensiveRuleExit.label}</div>
+                  <div style={{ color: C.mid, fontSize: "0.58rem", fontFamily: C.mono, lineHeight: 1.55 }}>
+                    {latest.defensiveRuleExit.reason === "hard stop"
+                      ? "This setup needed the hard stop."
+                      : `Fastest reasonable defense using current indicators: ${latest.defensiveRuleExit.pnlPct >= 0 ? "+" : ""}${latest.defensiveRuleExit.pnlPct}%.`}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {aggregate?.leaderboard?.length > 0 && (
+            <div style={{ marginBottom: activeReview.reviews?.length > 1 ? 10 : 0 }}>
+              <SecHead left="EXIT RULE RANKING" right={`${aggregate.triggeredCount} TRIGGERED SETUPS`} />
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {aggregate.leaderboard.slice(0, 3).map((rule, index) => (
+                  <div key={rule.rule} style={{ background: "#081008", border: `1px solid ${index === 0 ? `${C.green}25` : C.border}`, borderRadius: 8, padding: "9px 12px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                        <span style={{ color: index === 0 ? C.green : C.mid, fontSize: "0.62rem", fontFamily: C.mono, fontWeight: 700 }}>#{index + 1}</span>
+                        <span style={{ color: C.light, fontSize: "0.64rem", fontFamily: C.mono, fontWeight: 700 }}>{rule.label}</span>
+                        {aggregate.bestOverallRule?.rule === rule.rule && <Chip label="BEST OVERALL" color={C.green} bg="#0b2214" bd={`${C.green}40`} />}
+                        {aggregate.bestDefensiveRule?.rule === rule.rule && <Chip label="BEST DEFENSIVE" color={C.yellow} bg="#191400" bd="#504400" />}
+                      </div>
+                      <span style={{ color: rule.avgPnlPct >= 0 ? C.green : C.red, fontSize: "0.58rem", fontFamily: C.mono }}>
+                        {rule.avgPnlPct >= 0 ? "+" : ""}{rule.avgPnlPct}% avg
+                      </span>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(100px, 1fr))", gap: 6 }}>
+                      <div style={{ color: C.dim, fontSize: "0.54rem", fontFamily: C.mono }}>Win {rule.winRate}%</div>
+                      <div style={{ color: C.dim, fontSize: "0.54rem", fontFamily: C.mono }}>Capture {rule.captureRate}%</div>
+                      <div style={{ color: C.dim, fontSize: "0.54rem", fontFamily: C.mono }}>Hold {rule.avgBarsHeld} bars</div>
+                      {rule.defensiveImprovement != null && (
+                        <div style={{ color: rule.defensiveImprovement >= 0 ? C.yellow : C.red, fontSize: "0.54rem", fontFamily: C.mono }}>
+                          Defense {rule.defensiveImprovement >= 0 ? "+" : ""}{rule.defensiveImprovement}%
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {replayReviews.length > 0 && (
+            <div style={{ marginBottom: activeReview.reviews?.length > 1 ? 10 : 0 }}>
+              <SecHead left="SETUP REPLAY STRIP" right={`SCALE ±${replayScale.toFixed(1)}%`} />
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {replayReviews.map((review) => (
+                  <div key={review.id} style={{ background: "#081008", border: `1px solid ${C.border}`, borderRadius: 8, padding: "9px 12px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                        <Chip label={`${review.direction} OTE`} color={review.direction === "LONG" ? C.green : C.red} />
+                        <span style={{ color: C.mid, fontSize: "0.56rem", fontFamily: C.mono }}>
+                          {formatReviewDate(review.entryDate || review.zoneDate, { month: "short", day: "numeric" })}
+                        </span>
+                      </div>
+                      <span style={{ color: review.bestRuleExit?.pnlPct >= 0 ? C.green : C.red, fontSize: "0.56rem", fontFamily: C.mono }}>
+                        Best exit {review.bestRuleExit?.pnlPct >= 0 ? "+" : ""}{review.bestRuleExit?.pnlPct ?? 0}%
+                      </span>
+                    </div>
+                    <div style={{ position: "relative", height: 16, background: "#090f09", borderRadius: 999, overflow: "hidden", marginBottom: 6 }}>
+                      <div style={{ position: "absolute", left: "50%", top: 0, bottom: 0, width: 1, background: `${C.border}` }} />
+                      <div style={{
+                        position: "absolute",
+                        right: "50%",
+                        top: 3,
+                        height: 10,
+                        width: spanPct(review.outcome?.maxAdversePct ?? 0),
+                        background: `${C.red}50`,
+                        borderRadius: "999px 0 0 999px",
+                      }} />
+                      <div style={{
+                        position: "absolute",
+                        left: "50%",
+                        top: 3,
+                        height: 10,
+                        width: spanPct(review.outcome?.maxFavorablePct ?? 0),
+                        background: `${C.green}50`,
+                        borderRadius: "0 999px 999px 0",
+                      }} />
+                      <div style={{
+                        position: "absolute",
+                        left: `calc(${linePct(review.bestRuleExit?.pnlPct ?? 0)} - 4px)`,
+                        top: 1,
+                        width: 8,
+                        height: 14,
+                        borderRadius: 4,
+                        background: C.yellow,
+                        boxShadow: `0 0 0 1px ${C.bg}`,
+                      }} />
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", color: C.dim, fontSize: "0.52rem", fontFamily: C.mono }}>
+                      <span>MAE -{Math.abs(review.outcome?.maxAdversePct ?? 0).toFixed(2)}%</span>
+                      <span>{review.bestRuleExit?.label || "Rule exit"} {review.bestRuleExit?.pnlPct >= 0 ? "+" : ""}{review.bestRuleExit?.pnlPct ?? 0}%</span>
+                      <span>MFE +{Math.abs(review.outcome?.maxFavorablePct ?? 0).toFixed(2)}%</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {activeReview.reviews?.length > 1 && (
+            <div>
+              <SecHead left="RECENT OTE REVIEWS" right={`${activeReview.reviews.length} FOUND`} />
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {activeReview.reviews.slice(0, 4).map((review) => (
+                  <div key={review.id} style={{ background: "#081008", border: `1px solid ${C.border}`, borderRadius: 8, padding: "9px 12px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                        <Chip label={`${review.direction} OTE`} color={review.direction === "LONG" ? C.green : C.red} />
+                        <span style={{ color: C.mid, fontSize: "0.56rem", fontFamily: C.mono }}>
+                          {review.entryPrice != null ? `${review.bestRuleExit?.label || "Rule exit"} ${review.bestRuleExit?.pnlPct >= 0 ? "+" : ""}${review.bestRuleExit?.pnlPct ?? 0}%` : "No entry trigger"}
+                        </span>
+                      </div>
+                      <span style={{ color: C.dim, fontSize: "0.52rem", fontFamily: C.mono }}>
+                        {formatReviewDate(review.entryDate || review.zoneDate, { month: "short", day: "numeric" })}
+                      </span>
+                    </div>
+                    <div style={{ color: C.dim, fontSize: "0.56rem", fontFamily: C.mono, lineHeight: 1.55 }}>
+                      {review.entryPrice != null
+                        ? `Entry $${review.entryPrice} | MFE ${review.outcome?.maxFavorablePct ?? 0}% | MAE ${review.outcome?.maxAdversePct ?? 0}%`
+                        : review.narrative}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
 // --- Signal Header ---
 export function SignalHeader({ d, analysis }) {
   const meta = SIGNALS[d.signal] || SIGNALS["NEUTRAL"];
@@ -278,7 +644,7 @@ export function SignalHeader({ d, analysis }) {
             </div>
           ))}
         </div>
-        <TagRow items={[`R:R ${rr}:1`, `SCORE ${d.score}/100`, `ADX ${d.adx}`, `VOL ${d.vol}x`, `VWAP ${d.aboveVWAP ? "^" : "v"}`, `ST ${d.supertrend ? "^" : "v"}`]} />
+        <TagRow items={[`R:R ${rr}:1`, `SCORE ${d.score}/100`, `ADX ${d.adx}`, `VOL ${d.vol}x`, `rVWAP ${d.aboveVWAP ? "^" : "v"}`, `ST ${d.supertrend ? "^" : "v"}`]} />
         <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 12 }}>
           {d.indicators.map((ind, i) => {
             const w = ind.status === "warn", f = ind.status === "fail";
@@ -364,6 +730,8 @@ export function PatternBreakouts({ patterns }) {
 
 // --- Signal Cards Grid ---
 export function SignalCards({ d }) {
+  const oteActive = d.ote?.validStructureBreak && d.ote?.inOTE;
+  const oteApproaching = d.ote?.validStructureBreak && d.ote?.approaching;
   const narrativeTiles = [
     {
       l: "MOMENTUM",
@@ -415,13 +783,13 @@ export function SignalCards({ d }) {
     },
     {
       l: "OTE",
-      v: d.ote?.inOTE ? "ACTIVE" : d.ote?.approaching ? "NEAR" : "NONE",
-      sub: d.ote?.inOTE
+      v: oteActive ? "ACTIVE" : oteApproaching ? "NEAR" : "NONE",
+      sub: oteActive
         ? `${d.ote.direction} setup in ${d.ote.retracementPct}% retrace zone`
-        : d.ote?.approaching
+        : oteApproaching
         ? `${d.ote.direction} pullback approaching zone`
         : "No active OTE pullback",
-      accent: d.ote?.inOTE ? C.green : d.ote?.approaching ? C.yellow : C.dim,
+      accent: oteActive ? C.green : oteApproaching ? C.yellow : C.dim,
     },
     {
       l: "PARTICIPATION",
