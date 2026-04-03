@@ -4,7 +4,7 @@ import ErrorBoundary from "./components/ErrorBoundary.jsx";
 import { useAuth } from "./auth/AuthProvider.jsx";
 import AnalyzeScreen from "./components/AnalyzeScreen.jsx";
 import QuickLogButton from "./components/QuickLogButton.jsx";
-import { Commentary, AISummary, SignalHeader, EarlyWarnings, PatternBreakouts, SignalCards, OptionsPlay, BacktestCard, MTFBadge, EarningsCard, TickerHistoryCard, OTEReviewCard } from "./components/SignalResult.jsx";
+import { ActionSignalCard, TradeNarrativeCard, EarlyWarnings, PatternBreakouts, SignalCards, OptionsPlay, BacktestCard, MTFBadge, EarningsCard, TickerHistoryCard, OTEReviewCard } from "./components/SignalResult.jsx";
 import { AlertNotifications, AlertSetButton, AlertsList } from "./components/AlertsPanel.jsx";
 import { buildSignalVideoProps } from "./components/videoExportProps.js";
 import { fetchCandleData, fetchBacktestData, fetchEarnings } from "./api/finnhub.js";
@@ -66,6 +66,13 @@ function buildRecentAnalysisEntry(card, analysis, assetType) {
   };
 }
 
+const RESULT_SECTIONS = [
+  { id: "overview", label: "OVERVIEW" },
+  { id: "plan", label: "TRADE PLAN" },
+  { id: "evidence", label: "EVIDENCE" },
+  { id: "history", label: "HISTORY" },
+];
+
 function buildOteReviewErrorState(timeframe, message) {
   return {
     selectedTimeframe: timeframe,
@@ -119,6 +126,7 @@ export default function App() {
   const [oteReview, setOteReview] = useState(null);
   const [storageVersion, setStorageVersion] = useState(0);
   const [recentAnalyses, setRecentAnalyses] = useState(() => getRecentAnalyses());
+  const [resultSection, setResultSection] = useState("overview");
 
   useEffect(() => subscribeStorage(({ origin, keys }) => {
     if (origin === "cloud" || origin === "hydrate" || origin === "auth") {
@@ -141,6 +149,7 @@ export default function App() {
     setAnalysis(ai);
     setAssetType(at);
     setError(null);
+    setResultSection("overview");
     let finalCard = d;
     let finalAnalysis = ai;
     let reviewRaw = liveRaw;
@@ -195,6 +204,7 @@ export default function App() {
   const reset = () => {
     setResult(null); setAnalysis(null); setError(null);
     setBacktestStats(null); setWeeklySignal(null); setIndicatorReport(null); setEarnings(null); setOteReview(null);
+    setResultSection("overview");
   };
 
   const handleScreenerSelect = (card) => {
@@ -275,6 +285,68 @@ export default function App() {
       {label}
     </button>
   );
+
+  const ResultSectionBtn = ({ id, label }) => (
+    <button
+      onClick={() => setResultSection(id)}
+      style={{
+        flex: 1,
+        padding: "9px 10px",
+        borderRadius: 7,
+        fontFamily: C.mono,
+        fontSize: "0.58rem",
+        letterSpacing: "0.1em",
+        fontWeight: 700,
+        background: resultSection === id ? "#0d2a18" : C.card,
+        border: `1px solid ${resultSection === id ? C.green : C.border}`,
+        color: resultSection === id ? C.green : C.dim,
+        transition: "all 0.2s",
+      }}
+    >
+      {label}
+    </button>
+  );
+
+  const renderResultSection = () => {
+    switch (resultSection) {
+      case "overview":
+        return (
+          <>
+            <TradeNarrativeCard analysis={analysis} signal={result.signal} />
+            <MTFBadge dailySignal={result.signal} weeklySignal={weeklySignal} />
+          </>
+        );
+      case "plan":
+        return (
+          <>
+            <OTEReviewCard reviewState={oteReview} onSelectTimeframe={setSelectedOteTimeframe} />
+            <Suspense fallback={<SectionFallback label="LOADING SIZER" />}>
+              <PositionSizer key={`position:${storageVersion}`} d={result} />
+            </Suspense>
+            <OptionsPlay d={result} />
+            <EarningsCard earnings={earnings} />
+            <AlertsList key={`alerts:${storageVersion}`} />
+          </>
+        );
+      case "evidence":
+        return (
+          <>
+            <EarlyWarnings warnings={result.earlyWarnings || []} />
+            <PatternBreakouts patterns={result.patterns || []} />
+            <SignalCards d={result} />
+          </>
+        );
+      case "history":
+        return (
+          <>
+            <BacktestCard stats={backtestStats} signal={result.signal} indicatorReport={indicatorReport} />
+            <TickerHistoryCard entries={recentAnalyses.filter((entry) => entry.ticker === result.ticker).slice(0, 6)} />
+          </>
+        );
+      default:
+        return null;
+    }
+  };
 
   return (
     <div style={{ minHeight: "100vh", background: C.bg, padding: "20px 14px", display: "flex", flexDirection: "column", alignItems: "center" }}>
@@ -391,29 +463,20 @@ export default function App() {
 
           {result && (
             <div className="fade">
-              <TickerHistoryCard entries={recentAnalyses.filter((entry) => entry.ticker === result.ticker).slice(0, 6)} />
-              <MTFBadge dailySignal={result.signal} weeklySignal={weeklySignal} />
-              <Commentary analysis={analysis} signal={result.signal} />
-              <AISummary analysis={analysis} signal={result.signal} />
-              <BacktestCard stats={backtestStats} signal={result.signal} indicatorReport={indicatorReport} />
-              <OTEReviewCard reviewState={oteReview} onSelectTimeframe={setSelectedOteTimeframe} />
-              <SignalHeader d={result} analysis={analysis} />
-              <EarlyWarnings warnings={result.earlyWarnings || []} />
-              <PatternBreakouts patterns={result.patterns || []} />
-              <SignalCards d={result} />
-              <Suspense fallback={<SectionFallback label="LOADING SIZER" />}>
-                <PositionSizer key={`position:${storageVersion}`} d={result} />
-              </Suspense>
-              <OptionsPlay d={result} />
-              <EarningsCard earnings={earnings} />
+              <ActionSignalCard d={result} analysis={analysis} />
               <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
                 <AlertSetButton key={`alert-set:${result.ticker}:${storageVersion}`} ticker={result.ticker} assetType={assetType} />
                 <QuickLogButton d={result} onLogged={() => {}} />
                 <Suspense fallback={<SectionFallback label="LOADING VIDEO" />}>
-                  <VideoExportButton type="signal" props={buildSignalVideoProps(result, analysis)} label="VIDEO" />
+                  <VideoExportButton type="signal" props={buildSignalVideoProps(result, analysis)} label="VIDEO FOR X" />
                 </Suspense>
               </div>
-              <AlertsList key={`alerts:${storageVersion}`} />
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8, marginBottom: 10 }}>
+                {RESULT_SECTIONS.map((section) => (
+                  <ResultSectionBtn key={section.id} id={section.id} label={section.label} />
+                ))}
+              </div>
+              {renderResultSection()}
               <div style={{ textAlign: "center", color: "#182818", fontSize: "0.52rem", letterSpacing: "0.1em", fontFamily: C.mono, padding: "4px 0 20px" }}>
                 FOR INFORMATIONAL PURPOSES ONLY - NOT FINANCIAL ADVICE
               </div>

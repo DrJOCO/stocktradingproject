@@ -37,7 +37,7 @@ export function VideoExportButton({ type, props, label }) {
 
   return (
     <Card style={{ border: `1px solid ${C.cyan}30` }}>
-      <SecHead left="VIDEO PREVIEW" right="1080x1080 · 30fps" />
+      <SecHead left="VIDEO PREVIEW" right="1080x1080 · X READY" />
 
       {/* Inline player preview */}
       <div style={{ borderRadius: 8, overflow: "hidden", marginBottom: 12, border: `1px solid ${C.border}` }}>

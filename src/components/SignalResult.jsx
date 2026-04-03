@@ -568,6 +568,152 @@ export function OTEReviewCard({ reviewState, onSelectTimeframe }) {
   );
 }
 
+export function ActionSignalCard({ d, analysis }) {
+  if (!d) return null;
+  const meta = SIGNALS[d.signal] || SIGNALS["NEUTRAL"];
+  const cc = d.confidence >= 70 ? C.green : d.confidence >= 50 ? C.yellow : C.red;
+  const rr = d.entry > 0 && d.stop !== d.entry
+    ? (Math.abs(d.target - d.entry) / Math.abs(d.entry - d.stop)).toFixed(1) : "2.0";
+  const reasons = (d.indicators || []).filter((item) => item.status !== "warn" && item.status !== "fail").slice(0, 3);
+  const risks = (d.indicators || []).filter((item) => item.status === "warn" || item.status === "fail").slice(0, 2);
+
+  return (
+    <Card style={{ padding: 0, overflow: "hidden", border: `1px solid ${meta.color}30` }}>
+      <div style={{ padding: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 10, flexWrap: "wrap" }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 4 }}>
+              <span style={{ color: C.dim, fontSize: "0.57rem", letterSpacing: "0.15em", fontFamily: C.mono }}>ACTION SIGNAL</span>
+              {d.adaptiveScored && (
+                <Chip label="ADAPTIVE" color={C.cyan} bg="#051414" bd={`${C.cyan}35`} />
+              )}
+            </div>
+            <div style={{ fontFamily: C.raj, fontSize: "1.65rem", fontWeight: 700, color: meta.color, letterSpacing: "0.04em", lineHeight: 1 }}>
+              {d.signal}
+            </div>
+            <div style={{ color: C.dim, fontSize: "0.55rem", letterSpacing: "0.1em", fontFamily: C.mono, marginTop: 4 }}>
+              {d.ticker} · {d.timeframe}
+            </div>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ color: cc, fontSize: "1.9rem", fontWeight: 800, lineHeight: 0.95, fontFamily: C.raj }}>{d.confidence}%</div>
+            <div style={{ color: C.dim, fontSize: "0.55rem", fontFamily: C.mono }}>confidence</div>
+          </div>
+        </div>
+
+        {analysis && (
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ color: C.light, fontSize: "0.94rem", fontWeight: 800, lineHeight: 1.15, fontFamily: C.raj, marginBottom: 5 }}>
+              {analysis.heroLead}
+            </div>
+            <div style={{ color: C.light, fontSize: "0.63rem", fontFamily: C.mono, lineHeight: 1.6 }}>
+              {analysis.heroSub}
+            </div>
+          </div>
+        )}
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 8, marginBottom: 12 }}>
+          {[
+            { l: "ENTRY", v: `$${d.entry}`, sub: "market", c: C.light },
+            { l: "STOP", v: `$${d.stop}`, sub: `${d.stopPct}%`, c: C.red },
+            { l: "TARGET", v: `$${d.target}`, sub: `${d.tgtPct}%`, c: C.green },
+          ].map((box) => (
+            <div key={box.l} style={{ background: "#090f09", border: `1px solid ${C.border}`, borderRadius: 6, padding: "9px 10px" }}>
+              <div style={{ color: C.dim, fontSize: "0.53rem", letterSpacing: "0.1em", marginBottom: 3, fontFamily: C.mono }}>{box.l}</div>
+              <div style={{ color: box.c, fontSize: "0.98rem", fontWeight: 800, fontFamily: C.mono }}>{box.v}</div>
+              <div style={{ color: C.dim, fontSize: "0.56rem", fontFamily: C.mono }}>{box.sub}</div>
+            </div>
+          ))}
+        </div>
+
+        <TagRow items={[`R:R ${rr}:1`, `SCORE ${d.score}/100`, `ADX ${d.adx}`, `VOL ${d.vol}x`]} />
+      </div>
+
+      <div style={{ background: "#050a05", borderTop: `1px solid ${C.border}`, padding: "12px 16px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+          <div>
+            <div style={{ color: C.dim, fontSize: "0.5rem", letterSpacing: "0.1em", marginBottom: 6, fontFamily: C.mono }}>TOP REASONS</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+              {reasons.length
+                ? reasons.map((item) => (
+                    <div key={item.label} style={{ color: C.mid, fontSize: "0.59rem", fontFamily: C.mono, lineHeight: 1.45 }}>
+                      + {item.label}
+                    </div>
+                  ))
+                : <div style={{ color: C.dim, fontSize: "0.57rem", fontFamily: C.mono }}>No dominant confirmations.</div>}
+            </div>
+          </div>
+          <div>
+            <div style={{ color: C.dim, fontSize: "0.5rem", letterSpacing: "0.1em", marginBottom: 6, fontFamily: C.mono }}>MAIN RISKS</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+              {risks.length
+                ? risks.map((item) => (
+                    <div key={item.label} style={{ color: item.status === "fail" ? C.red : C.yellow, fontSize: "0.59rem", fontFamily: C.mono, lineHeight: 1.45 }}>
+                      - {item.label}
+                    </div>
+                  ))
+                : <div style={{ color: C.dim, fontSize: "0.57rem", fontFamily: C.mono }}>No urgent risks from the current stack.</div>}
+            </div>
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+export function TradeNarrativeCard({ analysis, signal }) {
+  if (!analysis) return null;
+  const meta = SIGNALS[signal] || SIGNALS["NEUTRAL"];
+  const cc = analysis.conviction === "HIGH" ? C.green : analysis.conviction === "MEDIUM" ? C.yellow : C.red;
+  const title = analysis.contextTitle || "TRADE NARRATIVE";
+  const body = analysis.contextBody || analysis.summary || analysis.commentary;
+
+  return (
+    <Card style={{ border: `1px solid ${meta.color}25` }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+        <span style={{ color: C.cyan, fontSize: "0.6rem", letterSpacing: "0.12em", fontFamily: C.mono }}>{title.toUpperCase()}</span>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          {analysis.ivEnvironment && (
+            <Chip
+              label={`IV ${analysis.ivEnvironment}`}
+              color={analysis.ivEnvironment === "HIGH" ? C.orange : analysis.ivEnvironment === "LOW" ? C.cyan : C.mid}
+              bg={analysis.ivEnvironment === "HIGH" ? "#1a0d00" : "#001414"}
+            />
+          )}
+          <Chip label={`${analysis.conviction} CONVICTION`} color={cc} bg={cc + "18"} bd={cc + "40"} />
+        </div>
+      </div>
+
+      <p style={{ color: C.light, fontSize: "0.64rem", fontFamily: C.mono, lineHeight: 1.7, marginBottom: 12 }}>
+        {body}
+      </p>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginBottom: 10 }}>
+        <div style={{ background: "#091409", border: `1px solid ${C.green}25`, borderRadius: 6, padding: "9px 11px" }}>
+          <div style={{ color: C.dim, fontSize: "0.52rem", letterSpacing: "0.1em", marginBottom: 4, fontFamily: C.mono }}>KEY STRENGTH</div>
+          <div style={{ color: C.green, fontSize: "0.61rem", fontFamily: C.mono, lineHeight: 1.55 }}>{analysis.keyStrength}</div>
+        </div>
+        <div style={{ background: "#140909", border: `1px solid ${C.red}25`, borderRadius: 6, padding: "9px 11px" }}>
+          <div style={{ color: C.dim, fontSize: "0.52rem", letterSpacing: "0.1em", marginBottom: 4, fontFamily: C.mono }}>KEY RISK</div>
+          <div style={{ color: C.red, fontSize: "0.61rem", fontFamily: C.mono, lineHeight: 1.55 }}>{analysis.keyRisk}</div>
+        </div>
+      </div>
+
+      {analysis.ivNote && (
+        <div style={{ background: "#06090a", border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 11px", marginBottom: 8 }}>
+          <span style={{ color: C.orange, fontSize: "0.55rem", fontWeight: 700, fontFamily: C.mono }}>IV ENVIRONMENT: </span>
+          <span style={{ color: C.mid, fontSize: "0.57rem", fontFamily: C.mono }}>{analysis.ivNote}</span>
+        </div>
+      )}
+
+      <div style={{ background: "#0c180c", border: `1px solid ${C.border}`, borderRadius: 6, padding: "9px 12px" }}>
+        <span style={{ color: C.yellow, fontSize: "0.56rem", fontWeight: 700, letterSpacing: "0.1em", fontFamily: C.mono }}>TRADE PLAN: </span>
+        <span style={{ color: C.mid, fontSize: "0.61rem", fontFamily: C.mono }}>{analysis.suggestion}</span>
+      </div>
+    </Card>
+  );
+}
+
 // --- Signal Header ---
 export function SignalHeader({ d, analysis }) {
   const meta = SIGNALS[d.signal] || SIGNALS["NEUTRAL"];
