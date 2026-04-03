@@ -50,6 +50,17 @@ export function getSignalBias(signal) {
   return "NEUTRAL";
 }
 
+function getActionability(card) {
+  const bias = getSignalBias(card?.signal);
+  if (bias === "NEUTRAL") return 0;
+  const edge = Math.abs((card?.score ?? 50) - 50);
+  return edge >= 8 ? 2 : 1;
+}
+
+function getSignalEdge(card) {
+  return Math.abs((card?.score ?? 50) - 50);
+}
+
 export function buildMtfState(primarySignal, confirmSignal, confirmTimeframe, error = null) {
   if (!confirmTimeframe) {
     return { status: "OFF", timeframe: null, signal: null, aligned: null, message: null };
@@ -105,15 +116,22 @@ export async function buildBriefCard(ticker, timeframe, assetType, confirmTimefr
 
 export function rankMorningBriefResults(results, sortBy = "score") {
   return [...results].sort((a, b) => {
+    const actionabilityDiff = getActionability(b) - getActionability(a);
+    if (actionabilityDiff !== 0) return actionabilityDiff;
+
     if (sortBy === "confidence") return (b.confidence || 0) - (a.confidence || 0);
     if (sortBy === "rsi") return (a.rsi || 50) - (b.rsi || 50);
     if (sortBy === "volume") return (b.vol || 0) - (a.vol || 0);
     if (sortBy === "mtf") {
       const mtfDiff = (MTF_SORT_RANK[b.mtf?.status || "OFF"] || 0) - (MTF_SORT_RANK[a.mtf?.status || "OFF"] || 0);
       if (mtfDiff !== 0) return mtfDiff;
-      return (b.score || 0) - (a.score || 0);
+      const edgeDiff = getSignalEdge(b) - getSignalEdge(a);
+      if (edgeDiff !== 0) return edgeDiff;
+      return (b.confidence || 0) - (a.confidence || 0);
     }
-    return (b.score || 0) - (a.score || 0);
+    const edgeDiff = getSignalEdge(b) - getSignalEdge(a);
+    if (edgeDiff !== 0) return edgeDiff;
+    return (b.confidence || 0) - (a.confidence || 0);
   });
 }
 
@@ -126,8 +144,11 @@ export function shortSignal(signal = "") {
 
 export function summarizeOteReview(card) {
   try {
+    const bias = getSignalBias(card?.signal);
+    if (bias === "NEUTRAL") return "OTE not part of the current neutral setup.";
     const review = reviewOteTriggers(card.raw);
-    const latest = review.latestTriggered || review.latest;
+    const alignedReviews = (review.reviews || []).filter((item) => item.direction === bias);
+    const latest = alignedReviews.find((item) => item.entryPrice != null) || alignedReviews[0] || review.latestTriggered || review.latest;
     if (!latest) return "No recent valid OTE review.";
     if (!latest.entryPrice) return `${latest.direction} OTE touch, no trigger.`;
     return `${latest.direction} OTE triggered; best exit ${latest.bestRuleExit?.label || "n/a"} ${latest.bestRuleExit?.pnlPct >= 0 ? "+" : ""}${latest.bestRuleExit?.pnlPct ?? 0}%.`;
@@ -238,7 +259,8 @@ export async function runMorningBrief({
   }
 
   const ranked = rankMorningBriefResults(successfulCards, sortBy).slice(0, limit);
-  const topResults = ranked.slice(0, topCount);
+  const actionable = ranked.filter((card) => getActionability(card) > 0);
+  const topResults = (actionable.length ? actionable : ranked).slice(0, topCount);
   const runTime = new Date().toISOString();
 
   return {
