@@ -48,6 +48,18 @@ function compactBriefCard(card) {
   };
 }
 
+function buildPostPack(brief) {
+  const sections = [];
+  if (brief.summaryPost) sections.push(`Summary Post\n${brief.summaryPost}`);
+  if (brief.threadStarter) sections.push(`Thread Starter\n${brief.threadStarter}`);
+  if (brief.replyDrafts?.length) {
+    sections.push(
+      `Replies\n${brief.replyDrafts.map((reply, index) => `${index + 1}. ${reply}`).join("\n\n")}`,
+    );
+  }
+  return sections.join("\n\n---\n\n");
+}
+
 function CopyBlock({ title, value, buttonLabel = "COPY" }) {
   const [copied, setCopied] = useState(false);
 
@@ -98,6 +110,7 @@ export default function MorningBriefScreen({ onOpenTicker }) {
   const [error, setError] = useState(null);
   const [progress, setProgress] = useState({ done: 0, total: 0, ticker: "" });
   const [brief, setBrief] = useState(persisted);
+  const postPack = useMemo(() => buildPostPack(brief || {}), [brief]);
 
   useEffect(() => {
     saveMorningBriefState({
@@ -302,6 +315,7 @@ export default function MorningBriefScreen({ onOpenTicker }) {
             </div>
           </Card>
 
+          <CopyBlock title="X POST PACK" value={postPack} buttonLabel="COPY FULL PACK" />
           <CopyBlock title="X DRAFT · SCREEN SUMMARY" value={brief.summaryPost || ""} buttonLabel="COPY SUMMARY POST" />
           <CopyBlock title="X DRAFT · THREAD STARTER" value={brief.threadStarter || ""} buttonLabel="COPY THREAD STARTER" />
 
